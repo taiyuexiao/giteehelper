@@ -118,8 +118,8 @@ Review 评论、Request Changes、合并者批注如果包含“必须、需要�
 - 无人认领影响。
 
 ### 关系图
-节点：项目、产品需求、技术文档、规范、模块、契约、场景、人员、PR、代码路径。  
-边：`owns`、`implements`、`requires`、`provides`、`conflicts-with`、`contributes-to`、`changed-by`、`blocks`。  
+节点：项目、产品需求、技术文档、规范、模块、契约、场景、人员、PR、代码路径。
+边：`owns`、`implements`、`requires`、`provides`、`conflicts-with`、`contributes-to`、`changed-by`、`blocks`。
 每条边显示来源和置信度：`manual`、`contract`、`static`、`history`、`inferred`。
 
 ### 规则编辑器

@@ -1,8 +1,0 @@
-# GiteeHelper generated repair suggestion
-# Source: demo-requirement-1
-# This patch is a review artifact. Apply only after local verification.
---- a/docs/module-review.md
-+++ b/docs/module-review.md
-@@
-- // previous assumption
-+ // TODO: 更新前端金额换算、输入校验和相关测试
