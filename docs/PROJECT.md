@@ -24,6 +24,7 @@
 | 技术设计 | [modules/technical-design.md](modules/technical-design.md) | ✅ | 定义 Node/SQLite/React 架构、数据模型、API、影响分析、联调和修复机制 |
 | 实施计划 | [modules/implementation-plan.md](modules/implementation-plan.md) | 🚧 | 将 MVP 分为数据、Gitee、通知、联调、GUI、CLI 和验收阶段 |
 | 开发准备 | [modules/development-preparation.md](modules/development-preparation.md) | ✅ | 工程骨架、配置、数据库、测试、构建、CLI 与安全基线已经验证 |
+| 使用指南 | [modules/usage-guide.md](modules/usage-guide.md) | ✅ | 快速启动、影响查看、增量联调、修复和真实事件接入 |
 | 后端平台 | [modules/backend-platform.md](modules/backend-platform.md) | ✅ | SQLite、认证、RBAC、REST API 与审计 |
 | Gitee/飞书接入 | [modules/gitee-feishu-integrations.md](modules/gitee-feishu-integrations.md) | ✅ | Gitee API/WebHook/同步/PR 与飞书通知 |
 | 影响、联调与修复 | [modules/impact-and-integration.md](modules/impact-and-integration.md) | ✅ | 规则影响、证据链、增量联调、Repair Bundle |
@@ -41,6 +42,7 @@
 | 2026-09-26 | 开发 | 完成后端、Gitee/飞书、影响分析、增量联调、修复、GUI、CLI 与打包 MVP | 实施计划阶段 1–7 |
 | 2026-09-26 | 文档 | 重写面向公开仓库的 README，补齐架构、接入、CLI、安全和限制 | 项目文档 |
 | 2026-09-26 | 发布 | 将 MVP 与完整文档发布到公开 GitHub 仓库 | 项目文档、CLI 与打包 |
+| 2026-09-26 | 文档 | 新增面向日常使用的快速开始和工作流指南 | 使用指南 |
 
 ## 关键问题与解决
 - 现有工具分散：Gitee 可把原始事件推到飞书，AI 审查工具可修 PR，影响分析工具可算风险，但未发现完整覆盖本需求闭环的单体产品。

@@ -246,6 +246,7 @@ npm run cli -- manifest validate
 - [影响、联调与修复](docs/modules/impact-and-integration.md)
 - [Web 控制台](docs/modules/web-console.md)
 - [CLI 与打包](docs/modules/cli-and-packaging.md)
+- [使用指南](docs/modules/usage-guide.md)
 
 ## 安全边界
 
