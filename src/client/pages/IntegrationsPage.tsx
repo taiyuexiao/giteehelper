@@ -4,7 +4,7 @@ import {
   MessageSquare, RefreshCw, Save, ServerCog, ShieldCheck
 } from "lucide-react";
 import { api } from "../api";
-import { Loading, PageHeader } from "../components";
+import { HelpTooltip, Loading, PageHeader } from "../components";
 
 type Project = { id: number; name: string; giteeRepo: string | null; defaultBranch: string; feishuChatId: string | null };
 type Settings = {
@@ -30,15 +30,34 @@ type FormState = {
   feishuWebhookUrl: string;
 };
 
-function TextField({ label, value, onChange, placeholder, hint }: {
-  label: string; value: string; onChange: (value: string) => void; placeholder?: string; hint?: string;
+function TextField({ label, value, onChange, placeholder, hint, help }: {
+  label: string; value: string; onChange: (value: string) => void; placeholder?: string; hint?: string; help?: React.ReactNode;
 }) {
   return (
     <label className="settings-field">
-      <span>{label}</span>
+      <span>{label}{help && <HelpTooltip label={label}>{help}</HelpTooltip>}</span>
       <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
       {hint && <small>{hint}</small>}
     </label>
+  );
+}
+
+function RepoHelp() {
+  return (
+    <div className="help-tooltip-copy">
+      <p>填写 Gitee 仓库 URL 中最后两段，格式为 <code>命名空间/仓库名</code>。企业空间、组织和个人账号都属于命名空间。</p>
+      <div className="help-example">
+        <span>企业空间</span>
+        <code>https://gitee.com/shanghai-bank_1/agent-evaluation-platform</code>
+        <strong>shanghai-bank_1/agent-evaluation-platform</strong>
+      </div>
+      <div className="help-example">
+        <span>个人账号</span>
+        <code>https://gitee.com/mortisspl/test</code>
+        <strong>mortisspl/test</strong>
+      </div>
+      <p className="help-warning">不能只填写 <code>test</code>，否则无法定位仓库。</p>
+    </div>
   );
 }
 
@@ -161,7 +180,7 @@ export default function IntegrationsPage() {
         </div>
         <div className="settings-grid">
           <TextField label="Gitee API Base" value={form.giteeApiBase} onChange={(value) => setForm({ ...form, giteeApiBase: value })} placeholder="https://gitee.com/api/v5" hint="支持 Gitee.com、企业版或私有化 API 地址。" />
-          <TextField label="目标仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" hint="用于读取 PR、回写评论和创建修复 PR。" />
+          <TextField label="目标仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" hint="用于读取 PR、回写评论和创建修复 PR。" help={<RepoHelp />} />
           <TextField label="约定主分支" value={form.giteeDefaultBranch} onChange={(value) => setForm({ ...form, giteeDefaultBranch: value })} placeholder="main" hint="修复 PR 默认以此分支为目标。" />
           <SecretField label="Gitee Private Access Token" value={form.giteeToken} configured={status.settings.giteeTokenConfigured} onChange={(value) => setForm({ ...form, giteeToken: value })} />
           <SecretField label="WebHook Secret" value={form.giteeWebhookSecret} configured={status.settings.giteeWebhookSecretConfigured} onChange={(value) => setForm({ ...form, giteeWebhookSecret: value })} />
@@ -197,7 +216,7 @@ export default function IntegrationsPage() {
         </div>
         <div className="project-config-grid">
           <TextField label="项目名称" value={project.name} onChange={(value) => setProject({ ...project, name: value })} />
-          <TextField label="项目仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" />
+          <TextField label="项目仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" help={<RepoHelp />} />
           <TextField label="主分支" value={form.giteeDefaultBranch} onChange={(value) => setForm({ ...form, giteeDefaultBranch: value })} />
           <TextField label="飞书目标会话" value={project.feishuChatId ?? ""} onChange={(value) => setProject({ ...project, feishuChatId: value })} placeholder="群 ID 或会话标识" hint="当前 MVP 主要使用群机器人 Webhook。" />
         </div>

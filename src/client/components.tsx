@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, CircleDot, Clock3, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDot, CircleHelp, Clock3, XCircle } from "lucide-react";
 
 export function PageHeader({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
   return (
@@ -58,6 +58,15 @@ export function EmptyState({ icon, title, text }: { icon: ReactNode; title: stri
       <h2>{title}</h2>
       <p>{text}</p>
     </div>
+  );
+}
+
+export function HelpTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="help-tooltip" tabIndex={0} role="button" aria-label={`${label}说明`}>
+      <CircleHelp size={15} />
+      <span className="help-tooltip-content" role="tooltip">{children}</span>
+    </span>
   );
 }
 
