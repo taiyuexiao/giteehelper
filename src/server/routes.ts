@@ -6,6 +6,7 @@ import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 import { createSession, currentUser, destroySession, hashPassword, login, requireAuth, requireRole } from "./auth.js";
 import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.js";
 import { createIntegrationRun, getRun, listModules } from "./integration.js";
+import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { createBranch, createPullComment, createPullRequest, listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature } from "./gitee.js";
 import { buildImpactCard, sendFeishuText } from "./feishu.js";
@@ -534,13 +535,32 @@ router.get("/integrations", requireAuth, (_req, res) => {
       configured: Boolean(config.giteeToken),
       apiBase: config.giteeApiBase,
       repo: config.giteeRepo || null,
+      defaultBranch: config.giteeDefaultBranch,
       webhookSecret: Boolean(config.giteeWebhookSecret)
     },
     feishu: {
       configured: Boolean(config.feishuWebhookUrl),
       mode: config.feishuWebhookUrl ? "webhook" : "dry-run"
-    }
+    },
+    settings: publicRuntimeSettings()
   });
+});
+
+router.get("/settings", requireAuth, requireAdmin, (_req, res) => {
+  res.json(publicRuntimeSettings());
+});
+
+router.patch("/settings", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const changed = updateRuntimeSettings(req.body as Record<string, unknown>);
+    audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "settings_update", "settings", "runtime", {
+      fields: Object.keys(changed),
+      secretFields: Object.keys(changed).filter((key) => ["giteeToken", "giteeWebhookSecret", "feishuWebhookUrl"].includes(key))
+    });
+    res.json({ ok: true, changed: Object.keys(changed), settings: publicRuntimeSettings() });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "settings update failed" });
+  }
 });
 
 router.post("/integrations/gitee/test", requireAuth, requireAdmin, async (_req, res) => {

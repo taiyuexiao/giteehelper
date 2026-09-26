@@ -358,3 +358,52 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
   .graph-toolbar { grid-template-columns: 1fr; }
   .graph-type-filters { grid-column: auto; }
 }
+
+/* Integration settings */
+.settings-section { margin-bottom: 17px; background: white; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.settings-section-header {
+  min-height: 76px; padding: 15px 19px; display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-section-header h2 { margin: 0 0 4px; font-size: 16px; }
+.settings-section-header p { margin: 0; color: var(--muted); font-size: 11px; }
+.settings-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; }
+.settings-icon.gitee { color: var(--teal); background: #e6f2f0; }
+.settings-icon.feishu { color: var(--blue); background: #e7f0f7; }
+.settings-icon.project { color: var(--orange); background: #fff0df; }
+.settings-icon.runtime { color: var(--muted); background: #eaf0f1; }
+.settings-grid { padding: 19px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 20px; }
+.project-config-grid { padding: 19px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 20px; }
+.settings-field { min-width: 0; display: grid; gap: 7px; color: #4e5e65; font-size: 11px; font-weight: 750; }
+.settings-field > span { display: inline-flex; align-items: center; gap: 5px; }
+.settings-field input { min-height: 41px; }
+.settings-field small { color: var(--muted); font-size: 10px; line-height: 1.5; font-weight: 500; }
+.secret-input { position: relative; display: flex; align-items: center; }
+.secret-input input { padding-right: 42px; }
+.secret-input .icon-button { position: absolute; right: 4px; color: var(--muted); }
+.settings-note {
+  min-height: 66px; padding: 13px 14px; display: flex; align-items: flex-start; gap: 9px;
+  color: var(--muted); background: #f7f9fa; border: 1px solid var(--line); border-radius: 6px;
+}
+.settings-note svg { color: var(--teal); flex: 0 0 auto; }
+.settings-note strong, .settings-note span { display: block; }
+.settings-note strong { margin-bottom: 4px; color: var(--ink); font-size: 11px; }
+.settings-note span { font-size: 10px; line-height: 1.55; }
+.runtime-grid { padding: 18px 19px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.runtime-grid > div { padding: 12px 13px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafb; }
+.runtime-grid span, .runtime-grid strong { display: block; }
+.runtime-grid span { color: var(--muted); font-size: 10px; }
+.runtime-grid strong { margin-top: 7px; color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .settings-section-header { grid-template-columns: 42px minmax(0, 1fr) auto; }
+  .settings-section-header > button { grid-column: 2 / -1; justify-self: start; }
+  .settings-grid, .project-config-grid { grid-template-columns: 1fr; }
+  .runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 580px) {
+  .settings-section-header { grid-template-columns: 42px minmax(0, 1fr); }
+  .settings-section-header > .badge, .settings-section-header > button { grid-column: 2; justify-self: start; }
+  .runtime-grid { grid-template-columns: 1fr; }
+}

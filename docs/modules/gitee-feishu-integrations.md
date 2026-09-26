@@ -1,6 +1,6 @@
 # 模块：Gitee 与飞书接入
 
-> 状态：✅ 代码完成；真实 Gitee 已验证，飞书待测试群配置
+> 状态：✅ Web 配置与代码完成；真实 Gitee 已验证，飞书待测试群配置
 > 最近更新：2026-09-26
 
 ## 摘要
@@ -32,6 +32,18 @@
 - 本地构造 Gitee WebHook 成功生成事件、影响和联调 Run；
 - 飞书未提供测试 Webhook，仅验证 dry-run 路径。
 
+## Web 配置
+“接入设置”支持编辑以下配置，并通过 `PATCH /api/settings` 保存：
+
+- `GITEE_API_BASE`
+- `GITEE_TOKEN`
+- `GITEE_WEBHOOK_SECRET`
+- `GITEE_REPO`
+- `GITEE_DEFAULT_BRANCH`
+- `FEISHU_WEBHOOK_URL`
+
+Token、WebHook Secret 和飞书 Webhook 使用服务器端 Secret Store；界面只显示“已配置/未配置”，不回显原值。留空提交表示保持不变。
+
 ## 安全
 - `.env` 已加入 `.gitignore`；
 - Gitee 账号密码未使用、未保存；
@@ -48,3 +60,4 @@
 | 日期 | 变更 | 关联需求 |
 |---|---|---|
 | 2026-09-26 | 完成 Gitee API、WebHook、同步、PR 评论、修复 PR 接口和飞书通知 | 实施阶段 2、3、6 |
+| 2026-09-26 | 将 Gitee/飞书配置改为 Web 可编辑，并使用加密 Secret Store | 接入配置 |

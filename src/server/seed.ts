@@ -1,8 +1,10 @@
 import { audit, execute, queryOne, queryAll } from "./db.js";
 import { ensureAdminUser } from "./auth.js";
+import { loadRuntimeSettings } from "./settings.js";
 
 export function seed() {
   ensureAdminUser();
+  loadRuntimeSettings();
   if (!queryOne(`SELECT id FROM projects LIMIT 1`)) {
     execute(`INSERT INTO projects (name, gitee_repo, default_branch) VALUES (?, ?, ?)`, ["GiteeHelper 示例项目", "待接入", "main"]);
   }

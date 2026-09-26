@@ -105,6 +105,8 @@ docs/
 - 其他 `/api/*` 需要 Bearer Token，健康检查除外。
 
 ### 配置与数据
+- `GET /api/settings`、`PATCH /api/settings`
+- Web 配置保存到 `settings` 表；Secret 使用 AES-256-GCM 加密，API 不回显原值。
 - `GET /api/dashboard`
 - `GET /api/graph`
 - `GET/POST/PATCH /api/modules`
