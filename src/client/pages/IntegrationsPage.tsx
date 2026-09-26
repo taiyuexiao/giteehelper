@@ -42,25 +42,6 @@ function TextField({ label, value, onChange, placeholder, hint, help }: {
   );
 }
 
-function RepoHelp() {
-  return (
-    <div className="help-tooltip-copy">
-      <p>填写 Gitee 仓库 URL 中最后两段，格式为 <code>命名空间/仓库名</code>。企业空间、组织和个人账号都属于命名空间。</p>
-      <div className="help-example">
-        <span>企业空间</span>
-        <code>https://gitee.com/shanghai-bank_1/agent-evaluation-platform</code>
-        <strong>shanghai-bank_1/agent-evaluation-platform</strong>
-      </div>
-      <div className="help-example">
-        <span>个人账号</span>
-        <code>https://gitee.com/mortisspl/test</code>
-        <strong>mortisspl/test</strong>
-      </div>
-      <p className="help-warning">不能只填写 <code>test</code>，否则无法定位仓库。</p>
-    </div>
-  );
-}
-
 function SecretField({ label, value, configured, onChange }: {
   label: string; value: string; configured: boolean; onChange: (value: string) => void;
 }) {
@@ -82,6 +63,26 @@ function SecretField({ label, value, configured, onChange }: {
       </div>
       <small>{configured ? "不会回显原值；留空则保持当前配置" : "保存后才会写入服务器端 Secret Store"}</small>
     </label>
+  );
+}
+
+function RepoHelp() {
+  return (
+    <div className="help-tooltip-copy">
+      <h3>目标仓库填写格式</h3>
+      <p>请填写 Gitee 仓库的完整路径，格式为 <code>命名空间/仓库名</code>。命名空间可以是企业空间、组织或个人账号。</p>
+      <div className="help-example">
+        <span>企业空间仓库</span>
+        <code>https://gitee.com/shanghai-bank_1/agent-evaluation-platform</code>
+        <strong>shanghai-bank_1/agent-evaluation-platform</strong>
+      </div>
+      <div className="help-example">
+        <span>个人账号仓库</span>
+        <code>https://gitee.com/mortisspl/test</code>
+        <strong>mortisspl/test</strong>
+      </div>
+      <p className="help-warning">请勿仅填写 <code>test</code>。缺少命名空间时，Gitee API 无法唯一定位目标仓库。</p>
+    </div>
   );
 }
 
