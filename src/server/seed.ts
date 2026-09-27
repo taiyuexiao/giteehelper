@@ -1,4 +1,5 @@
 import { audit, execute, queryOne, queryAll } from "./db.js";
+import { config } from "./config.js";
 import { ensureAdminUser } from "./auth.js";
 import { loadRuntimeSettings } from "./settings.js";
 
@@ -6,7 +7,11 @@ export function seed() {
   ensureAdminUser();
   loadRuntimeSettings();
   if (!queryOne(`SELECT id FROM projects LIMIT 1`)) {
-    execute(`INSERT INTO projects (name, gitee_repo, default_branch) VALUES (?, ?, ?)`, ["GiteeHelper 示例项目", "待接入", "main"]);
+    execute(`INSERT INTO projects (name, gitee_repo, default_branch) VALUES (?, ?, ?)`, ["GiteeHelper 示例项目", config.giteeRepo || "待接入", config.giteeDefaultBranch || "main"]);
+  } else {
+    execute(`UPDATE projects SET gitee_repo = CASE WHEN gitee_repo = '待接入' OR gitee_repo IS NULL THEN ? ELSE gitee_repo END,
+      default_branch = CASE WHEN default_branch IS NULL OR default_branch = '' THEN ? ELSE default_branch END
+      WHERE id = (SELECT id FROM projects ORDER BY id LIMIT 1)`, [config.giteeRepo || "待接入", config.giteeDefaultBranch || "main"]);
   }
   const project = queryOne<{ id: number }>(`SELECT id FROM projects ORDER BY id LIMIT 1`)!;
   const admin = queryOne<{ id: number }>(`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`)!;
