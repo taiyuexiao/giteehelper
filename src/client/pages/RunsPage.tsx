@@ -29,7 +29,7 @@ export default function RunsPage() {
 
   return (
     <>
-      <PageHeader title="联调运行" description="一跳依赖优先使用真实模块；缺席依赖使用契约桩并明确标记。" />
+      <PageHeader title="联调运行" description="只有执行真实命令并通过后才算代码联调；否则仅记录契约组合并标记阻塞。" />
       {error && <div className="alert">{error}</div>}
       <section className="run-launch panel">
         <div><Boxes size={21} /><strong>发起增量联调</strong></div>
@@ -50,6 +50,7 @@ export default function RunsPage() {
           {!selected ? <EmptyState icon={<Activity size={25} />} title="选择一次运行" text="查看真实/Stub 组合、场景和测试输出。" /> : (
             <>
               <div className="panel-header"><div><h2>{selected.moduleKey} · Run #{selected.id}</h2><p>{selected.createdAt}</p></div><StatusBadge value={selected.status} /></div>
+              {selected.result.executionVerified !== true && <div className="alert">该记录只完成契约组合检查，不是真实代码联调。</div>}
               <div className="combination-grid">
                 {selected.combination.map((item, index) => (
                   <article key={`${item.moduleKey}-${index}`} className={`combination ${item.mode}`}>

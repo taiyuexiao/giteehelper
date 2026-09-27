@@ -46,7 +46,7 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
     moduleKey: target.moduleKey,
     version: target.provides[0]?.version ?? "0.0.0",
     mode: "real",
-    status: "passed"
+    status: "ready"
   }];
 
   for (const requirement of target.requires) {
@@ -56,7 +56,7 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
       moduleKey: provider?.moduleKey ?? `${requirement.key}:stub`,
       version: provider?.provides.find((item) => item.key === requirement.key)?.version ?? requirement.version,
       mode: isReal ? "real" : "stub",
-      status: requirement.mode === "optional" && !provider ? "skipped" : "passed"
+      status: requirement.mode === "optional" && !provider ? "skipped" : "ready"
     });
   }
 
@@ -68,29 +68,37 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
         moduleKey: partner.moduleKey,
         version: partner.provides[0]?.version ?? "0.0.0",
         mode: partner.status === "not_started" ? "stub" : "real",
-        status: "passed"
+        status: "ready"
       });
     }
   }
 
-  let status: IntegrationRun["status"] = combination.some((item) => item.status === "failed") ? "failed" : "passed";
+  let status: IntegrationRun["status"] = "blocked";
   let testOutput = "";
-  if (target.testCommand && process.env.RUN_MODULE_TESTS === "1") {
+  let executionVerified = false;
+  const shouldExecuteTests = Boolean(target.testCommand) && process.env.RUN_MODULE_TESTS === "1";
+  if (shouldExecuteTests) {
     try {
-      const output = await execFileAsync("sh", ["-lc", target.testCommand], { cwd: process.cwd(), timeout: 120000 });
+      const output = await execFileAsync("sh", ["-lc", target.testCommand!], { cwd: process.cwd(), timeout: 120000 });
       testOutput = output.stdout;
+      executionVerified = true;
+      status = combination.some((item) => item.status === "failed") ? "failed" : "passed";
     } catch (error) {
       status = "failed";
       testOutput = error instanceof Error ? error.message : String(error);
     }
   }
-  const sliceIntegrated = combination.some((item) => item.mode === "real" && item.moduleKey !== target.moduleKey);
+  const sliceIntegrated = executionVerified && combination.some((item) => item.mode === "real" && item.moduleKey !== target.moduleKey);
   const result = {
     scenarios: sharedScenarios,
     contractVerified: true,
+    executionVerified,
     sliceIntegrated,
+    command: shouldExecuteTests ? target.testCommand : null,
     testOutput: testOutput.slice(0, 12000),
-    note: sliceIntegrated ? "包含真实上下游模块" : "依赖尚未全部就绪，使用契约桩完成验证"
+    note: executionVerified
+      ? (sliceIntegrated ? "已执行真实上下游代码联调" : "已执行目标模块测试；未形成真实上下游联调")
+      : "仅完成契约组合检查，未执行真实代码联调"
   };
   const inserted = execute(
     `INSERT INTO integration_runs (project_id, trigger_event_id, module_key, status, combination_json, result_json)

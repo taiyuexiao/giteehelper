@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "../src/server/seed.js";
+import { execute } from "../src/server/db.js";
 import { createIntegrationRun, listModules } from "../src/server/integration.js";
 
 seed();
@@ -13,5 +14,9 @@ test("integration plan marks missing dependencies as contract stubs", async () =
   assert.equal(run.moduleKey, "frontend");
   assert.equal(run.combination[0].mode, "real");
   assert.ok(run.combination.some((item) => item.mode === "stub" || item.mode === "real"));
+  assert.equal(run.status, "blocked");
   assert.equal(run.result.contractVerified, true);
+  assert.equal(run.result.executionVerified, false);
+  execute(`DELETE FROM audit_logs WHERE resource_type = 'integration_run' AND resource_id = ?`, [run.id]);
+  execute(`DELETE FROM integration_runs WHERE id = ?`, [run.id]);
 });

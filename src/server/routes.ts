@@ -8,6 +8,7 @@ import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.
 import { createIntegrationRun, getRun, listModules } from "./integration.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
+import { cleanupMisleadingData } from "./cleanup.js";
 import { createBranch, createPullComment, createPullRequest, listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature } from "./gitee.js";
 import { buildImpactCard, sendFeishuText } from "./feishu.js";
 import type { GraphData, GraphEdge, GraphNode, Impact, Role, Severity, User } from "../shared/types.js";
@@ -377,6 +378,10 @@ router.delete("/users/:id", requireAuth, requireAdmin, (req, res) => {
   execute(`DELETE FROM users WHERE id = ?`, [id]);
   audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "user_delete", "user", id, { username: user.username });
   res.json({ ok: true });
+});
+
+router.post("/admin/cleanup-misleading-data", requireAuth, requireAdmin, (_req, res) => {
+  res.json(cleanupMisleadingData());
 });
 
 router.get("/audit", requireAuth, requireAdmin, (req, res) => {

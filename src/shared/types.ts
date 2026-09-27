@@ -101,7 +101,7 @@ export interface IntegrationCombinationItem {
   moduleKey: string;
   version: string;
   mode: "real" | "stub";
-  status: "passed" | "failed" | "blocked" | "skipped";
+  status: "ready" | "passed" | "failed" | "blocked" | "skipped";
 }
 
 export interface IntegrationRun {

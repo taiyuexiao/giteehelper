@@ -27,6 +27,7 @@
 - `GET/POST/PATCH /api/rules`
 - `GET/POST/PATCH/DELETE /api/users/:id`
 - `GET /api/audit`
+- `POST /api/admin/cleanup-misleading-data`
 - `GET/POST /api/runs`
 - `GET/POST /api/repairs`
 - `GET/PATCH /api/project`
@@ -40,9 +41,10 @@
 
 ## 验证
 - `npm run typecheck` 通过；
-- `npm test` 8 项通过；
+- `npm test` 9 项通过；
 - `/api/health`、`/api/login`、`/api/dashboard`、`/api/graph` 冒烟通过；
-- 未认证访问业务 API 返回 401。
+- 未认证访问业务 API 返回 401；
+- 误导性联调记录和 `[旧导入]` 数据可通过管理员清理接口或 CLI 删除。
 
 ## Bug 与问题记录
 
@@ -52,7 +54,7 @@
 - 不可破坏的行为：WHEN 业务请求并发 THEN 系统 SHALL CONTINUE TO 使用 WAL 和外键约束。
 - 根因：测试文件并行持有数据库写事务，SQLite 默认 busy timeout 不足。
 - 解决方式：设置 `PRAGMA busy_timeout = 5000`，并以 `--test-concurrency=1` 运行测试。
-- 验证方式：`npm test` 8 项稳定通过。
+- 验证方式：`npm test` 9 项稳定通过。
 
 ## 已知限制
 - 单项目、单组织、单进程 Session；
@@ -65,3 +67,4 @@
 | 2026-09-25 | 完成 schema、认证、RBAC、REST API、审计和种子数据 | 实施阶段 1 |
 | 2026-09-25 | 修复 SQLite 并行测试锁冲突 | BUG-001 |
 | 2026-09-27 | 增加用户负责模块汇总和用户删除接口 | 用户与身份 |
+| 2026-09-27 | 增加误导运行和旧导入数据清理接口 | 数据清理 |

@@ -5,6 +5,7 @@ import { config } from "../server/config.js";
 import { audit, execute, parseJson, queryAll, queryOne } from "../server/db.js";
 import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
+import { cleanupMisleadingData } from "../server/cleanup.js";
 import type { ContractRef } from "../shared/types.js";
 
 const [command = "help", ...args] = process.argv.slice(2);
@@ -127,6 +128,13 @@ async function main() {
       printJson(await createIntegrationRun(args[1], Number(args[2]) || null));
       return 0;
     }
+    case "cleanup":
+      if (args[0] !== "misleading-data") {
+        console.log("Usage: giteehelper cleanup misleading-data");
+        return 1;
+      }
+      printJson(cleanupMisleadingData());
+      return 0;
     case "status": {
       const run = queryOne(`SELECT id, trigger_event_id AS triggerEventId, module_key AS moduleKey, status,
         combination_json AS combinationJson, result_json AS resultJson, created_at AS createdAt
@@ -151,6 +159,7 @@ Commands:
   giteehelper manifest validate
   giteehelper contract test
   giteehelper integration run <module-key> [event-id]
+  giteehelper cleanup misleading-data
   giteehelper status <run-id>
   giteehelper repair create <impact-id>
   giteehelper repair review <repair-id>

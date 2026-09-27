@@ -28,7 +28,9 @@
 - provider 缺席时生成契约 Stub；
 - 共享场景模块加入最小切片；
 - 无依赖、无场景时不扩展组合；
-- `contractVerified` 与 `sliceIntegrated` 分开记录。
+- `contractVerified`、`executionVerified` 与 `sliceIntegrated` 分开记录；
+- 未执行真实测试命令时状态只能是 `blocked`，不得标记 `passed`；
+- 清理历史误导数据：`npm run cli -- cleanup misleading-data`。
 
 ## Repair Bundle
 ```text
@@ -55,6 +57,7 @@ giteehelper repair approve <repair-id>
 ## 验证
 - 文档 PR/规范合并可产生 blocking 影响；
 - Review 评论变更信号可产生 clarification；
+- 未配置并执行测试命令时，运行记录为 `blocked` 且 `executionVerified=false`；
 - `frontend` 联调可同时记录真实模块和契约桩；
 - Repair Bundle 包含 patch、来源和 `directWriteAllowed: false`；
 - CLI `manifest validate`、`contract test` 可运行。
@@ -69,3 +72,4 @@ giteehelper repair approve <repair-id>
 | 日期 | 变更 | 关联需求 |
 |---|---|---|
 | 2026-09-26 | 完成规则影响、证据链、一跳联调、Stub、Repair Bundle 和审批边界 | 实施阶段 3、4 |
+| 2026-09-27 | 禁止契约组合检查误报为通过，并新增误导运行/旧导入清理 | 联调真实性 |
