@@ -12,6 +12,12 @@ export interface User {
   feishuUserId?: string | null;
   active: boolean;
   createdAt: string;
+  ownedModules?: Array<{
+    id: number;
+    moduleKey: string;
+    name: string;
+    status: ModuleStatus;
+  }>;
 }
 
 export interface Module {

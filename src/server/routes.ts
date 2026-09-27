@@ -115,12 +115,24 @@ router.get("/graph", requireAuth, (_req, res) => {
   const users = queryAll<{ id: number; displayName: string; role: string }>(`SELECT id, display_name AS displayName, role FROM users WHERE active = 1`);
   for (const user of users) nodes.set(`user:${user.id}`, { id: `user:${user.id}`, label: user.displayName, type: "user", meta: { role: user.role } });
 
-  const modules = queryAll<{ id: number; moduleKey: string; name: string; ownerUserId: number | null; status: string; scenariosJson: string; providesJson: string; requiresJson: string }>(
-    `SELECT id, module_key AS moduleKey, name, owner_user_id AS ownerUserId, status, scenarios_json AS scenariosJson,
-            provides_json AS providesJson, requires_json AS requiresJson FROM modules`
+  const modules = queryAll<{ id: number; moduleKey: string; name: string; ownerUserId: number | null; ownerName: string | null; status: string; description: string | null; scenariosJson: string; providesJson: string; requiresJson: string }>(
+    `SELECT m.id, m.module_key AS moduleKey, m.name, m.owner_user_id AS ownerUserId, u.display_name AS ownerName,
+            m.status, m.description, m.scenarios_json AS scenariosJson,
+            m.provides_json AS providesJson, m.requires_json AS requiresJson
+     FROM modules m LEFT JOIN users u ON u.id = m.owner_user_id`
   );
   for (const module of modules) {
-    nodes.set(`module:${module.id}`, { id: `module:${module.id}`, label: module.name, type: "module", meta: { key: module.moduleKey, status: module.status } });
+    nodes.set(`module:${module.id}`, {
+      id: `module:${module.id}`,
+      label: module.name,
+      type: "module",
+      meta: {
+        key: module.moduleKey,
+        status: module.status,
+        owner: module.ownerName ?? "未分配",
+        workItem: module.moduleKey.startsWith("work-")
+      }
+    });
     if (project) edges.push({ id: `project-${module.id}`, source: `project:${project.id}`, target: `module:${module.id}`, label: "contains", confidence: "manual" });
     if (module.ownerUserId) edges.push({ id: `owner-${module.id}`, source: `user:${module.ownerUserId}`, target: `module:${module.id}`, label: "owns", confidence: "manual" });
     for (const [index, item] of parseJson<{ key: string; version: string }[]>(module.providesJson, []).entries()) {
@@ -300,8 +312,18 @@ router.post("/rules/preview", requireAuth, requireRole("admin", "maintainer"), (
 });
 
 router.get("/users", requireAuth, requireAdmin, (_req, res) => {
-  res.json(queryAll(`SELECT id, username, display_name AS displayName, role, email, gitee_login AS giteeLogin,
-    feishu_user_id AS feishuUserId, active, created_at AS createdAt FROM users ORDER BY id`));
+  type RawUser = Omit<User, "active" | "ownedModules"> & { active: number };
+  const users = queryAll<RawUser>(`SELECT id, username, display_name AS displayName, role, email,
+    gitee_login AS giteeLogin, feishu_user_id AS feishuUserId, active, created_at AS createdAt FROM users ORDER BY id`);
+  res.json(users.map((user) => ({
+    ...user,
+    active: Boolean(user.active),
+    ownedModules: queryAll(`SELECT id, module_key AS moduleKey, name, status FROM modules
+      WHERE owner_user_id = ?
+        AND name NOT LIKE '[旧导入]%'
+        AND name NOT LIKE '[示例]%'
+      ORDER BY CASE WHEN module_key LIKE 'module-%' THEN 0 ELSE 1 END, module_key`, [user.id])
+  })));
 });
 
 router.post("/users", requireAuth, requireAdmin, (req, res) => {
@@ -337,6 +359,23 @@ router.patch("/users/:id", requireAuth, requireAdmin, (req, res) => {
       body.active == null ? null : (body.active ? 1 : 0), password?.hash ?? null, password?.salt ?? null, id]
   );
   audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "user_update", "user", id, { fields: Object.keys(body).filter((key) => key !== "password") });
+  res.json({ ok: true });
+});
+
+router.delete("/users/:id", requireAuth, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const user = queryOne<{ id: number; username: string; role: Role }>(`SELECT id, username, role FROM users WHERE id = ?`, [id]);
+  if (!user) {
+    res.status(404).json({ error: "user not found" });
+    return;
+  }
+  if (user.role === "admin" && queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND active = 1`)?.count === 1) {
+    res.status(400).json({ error: "不能删除最后一个管理员" });
+    return;
+  }
+  execute(`UPDATE modules SET owner_user_id = NULL WHERE owner_user_id = ?`, [id]);
+  execute(`DELETE FROM users WHERE id = ?`, [id]);
+  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "user_delete", "user", id, { username: user.username });
   res.json({ ok: true });
 });
 

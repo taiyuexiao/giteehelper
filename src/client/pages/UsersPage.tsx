@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Plus, Save, ShieldCheck, UserRound } from "lucide-react";
+import { Boxes, KeyRound, Plus, Save, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { api } from "../api";
 import { Loading, Modal, PageHeader } from "../components";
 import type { Role, User } from "../../shared/types";
@@ -12,6 +12,7 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ username: "", displayName: "", role: "developer", email: "", giteeLogin: "", feishuUserId: "", password: "" });
+  const [deleting, setDeleting] = useState<User | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -24,6 +25,18 @@ export default function UsersPage() {
       if (creating) await api("/users", { method: "POST", body: JSON.stringify(payload) });
       else if (editing) await api(`/users/${editing.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       setCreating(false); setEditing(null); setMessage("用户已保存"); await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  async function deleteUser() {
+    if (!deleting) return;
+    try {
+      await api(`/users/${deleting.id}`, { method: "DELETE" });
+      setDeleting(null);
+      setMessage("用户已删除，其负责模块已改为未分配");
+      await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -47,16 +60,29 @@ export default function UsersPage() {
       <section className="panel">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>用户</th><th>角色</th><th>Gitee</th><th>飞书</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>用户</th><th>角色</th><th>负责模块 / 工作项</th><th>Gitee</th><th>飞书</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
               {users.map((user) => (
                 <tr key={user.id}>
                   <td><div className="module-name"><UserRound size={18} /><div><strong>{user.displayName}</strong><small>{user.username} · {user.email ?? "无邮箱"}</small></div></div></td>
                   <td><span className={`role role-${user.role}`}><ShieldCheck size={14} />{roleLabels[user.role]}</span></td>
+                  <td>
+                    <div className="owned-modules">
+                      <strong><Boxes size={14} />{user.ownedModules?.length ?? 0}</strong>
+                      <div>{user.ownedModules?.slice(0, 3).map((module) => <span key={module.id}>{module.name}</span>)}
+                        {(user.ownedModules?.length ?? 0) > 3 && <small>+{(user.ownedModules?.length ?? 0) - 3}</small>}
+                      </div>
+                    </div>
+                  </td>
                   <td>{user.giteeLogin ?? "—"}</td>
                   <td>{user.feishuUserId ?? "—"}</td>
                   <td><span className={`badge ${user.active ? "status-passed" : "status-blocked"}`}>{user.active ? "启用" : "停用"}</span></td>
-                  <td><button className="small-button" onClick={() => openEdit(user)}><KeyRound size={14} />编辑</button></td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="small-button" onClick={() => openEdit(user)}><KeyRound size={14} />编辑</button>
+                      <button className="small-button danger" onClick={() => setDeleting(user)}><Trash2 size={14} />删除</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -75,6 +101,15 @@ export default function UsersPage() {
             <label className="full">{creating ? "初始密码" : "重置密码（留空不修改）"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
           </div>
           <div className="modal-actions"><button className="secondary-button" onClick={() => { setCreating(false); setEditing(null); }}>取消</button><button className="primary-button" onClick={() => void saveUser()}><Save size={16} />保存</button></div>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal title="删除用户" onClose={() => setDeleting(null)}>
+          <p className="confirm-copy">确认删除 <strong>{deleting.displayName}</strong>？该用户负责的模块会改为“未分配”，删除操作会写入审计。</p>
+          <div className="modal-actions">
+            <button className="secondary-button" onClick={() => setDeleting(null)}>取消</button>
+            <button className="danger-button" onClick={() => void deleteUser()}><Trash2 size={16} />确认删除</button>
+          </div>
         </Modal>
       )}
     </>

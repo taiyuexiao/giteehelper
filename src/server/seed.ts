@@ -16,23 +16,6 @@ export function seed() {
   const project = queryOne<{ id: number }>(`SELECT id FROM projects ORDER BY id LIMIT 1`)!;
   const admin = queryOne<{ id: number }>(`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`)!;
 
-  const users = [
-    ["reviewer", "示例审查者", "reviewer", "reviewer@example.com", "reviewer"],
-    ["developer-a", "模块开发者 A", "developer", "developer-a@example.com", "developer-a"],
-    ["developer-b", "模块开发者 B", "developer", "developer-b@example.com", "developer-b"]
-  ];
-  for (const [username, displayName, role, email, giteeLogin] of users) {
-    if (!queryOne(`SELECT id FROM users WHERE username = ?`, [username])) {
-      execute(
-        `INSERT INTO users (username, display_name, role, email, gitee_login) VALUES (?, ?, ?, ?, ?)`,
-        [username, displayName, role, email, giteeLogin]
-      );
-    }
-  }
-
-  const devA = queryOne<{ id: number }>(`SELECT id FROM users WHERE username = 'developer-a'`)!;
-  const devB = queryOne<{ id: number }>(`SELECT id FROM users WHERE username = 'developer-b'`)!;
-
   const modules = [
     {
       key: "product-docs", name: "产品需求与规范", owner: admin.id, status: "release_ready",
@@ -40,14 +23,14 @@ export function seed() {
       requires: [], description: "项目产品需求、验收条件与开发规范。"
     },
     {
-      key: "frontend", name: "前端模块", owner: devA.id, status: "code_submitted",
+      key: "frontend", name: "前端模块", owner: admin.id, status: "code_submitted",
       paths: ["src/client/**", "web/**"], scenarios: ["checkout-success", "review-notification"],
       provides: [{ key: "ui.checkout.v1", version: "1.0" }],
       requires: [{ key: "api.order.v1", version: "^1.0", mode: "required" }, { key: "api.user.v1", version: "^1.0", mode: "optional" }],
       testCommand: "", description: "用户界面、交互流程和前端状态管理。"
     },
     {
-      key: "backend-api", name: "后端 API 模块", owner: devB.id, status: "contract_verified",
+      key: "backend-api", name: "后端 API 模块", owner: admin.id, status: "contract_verified",
       paths: ["src/server/**", "api/**"], scenarios: ["checkout-success"],
       provides: [{ key: "api.order.v1", version: "1.1" }],
       requires: [{ key: "data.order.v1", version: "^1.0", mode: "required" }],
