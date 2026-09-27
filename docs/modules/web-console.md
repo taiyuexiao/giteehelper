@@ -8,7 +8,7 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、关系图�
 
 ## 页面
 - `/`：Action Inbox、指标、影响与行动；
-- `/graph`：架构总览、影响路径、全部对象三种模式，分层关系图、搜索、类型过滤、来源/置信度；
+- `/graph`：架构总览、影响路径、全部对象三种模式，分层关系图、搜索、类型过滤、来源/置信度；页头可打开独立 Archify 系统架构图 `/architecture.html`；
 - `/modules`：模块/契约、新建模块、发起联调；
 - `/runs`：联调记录、真实/Stub 组合、运行结果；
 - `/repairs`：修复包 diff、测试、批准、下载；
@@ -23,6 +23,8 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、关系图�
 - `src/client/components.tsx`
 - `src/client/pages/*.tsx`
 - `src/client/styles.css`
+- `docs/diagrams/giteehelper-architecture.json` / `.html`：Archify 规范与独立架构图成品
+- `scripts/build-diagrams.mjs`：构建时把 Archify 成品发布为 `/architecture.html`
 
 ## 设计约束
 - 运维型界面使用中性色、8px 卡片圆角和稳定表格/网格；
@@ -39,6 +41,7 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、关系图�
 - 1280px 视口下页面 `scrollWidth === viewportWidth`，无全局横向溢出；
 - Dashboard 显示真实同步 PR 产生的影响；
 - 各页面无浏览器运行时错误。
+- Archify 架构图通过 `showcase` 质量校验：9/9 检查通过、0 错误、0 警告；自动视觉检查覆盖 1440×900 与 2048×1320 的明暗主题，均无溢出且可读性通过。
 
 ## Bug 与问题记录
 
@@ -68,6 +71,7 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、关系图�
 
 ## 已知限制
 - 表单仍以 MVP 表格/Modal 为主，未完成复杂向导；
+- React Flow 页仍用于真实数据对象与影响路径探索；跨组件系统架构以 Archify 独立图为权威视图。
 - 全景模式的大规模节点仍需要虚拟化和更高级聚合；
 - 审计分页、用户批量导入、规则 diff 尚未完成。
 
@@ -83,3 +87,4 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、关系图�
 | 2026-09-27 | 将帮助浮窗改为 Portal 顶层浮层并自动适配视口 | BUG-003 |
 | 2026-09-27 | 将关系图重构为架构总览/影响路径/全部对象三模式，并增加架构流程条 | 关系图可读性 |
 | 2026-09-27 | 用户页自动同步负责模块/工作项，支持删除示例账号 | 用户与身份 |
+| 2026-09-27 | 使用 Archify 重做系统架构图并接入 `/architecture.html` | 关系图可读性 |

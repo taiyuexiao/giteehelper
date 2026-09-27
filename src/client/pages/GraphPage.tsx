@@ -5,7 +5,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  Boxes, FileCode2, GitPullRequest, Network, Search, UserRound, Workflow, X
+  Boxes, ExternalLink, FileCode2, GitPullRequest, Network, Search, UserRound, Workflow, X
 } from "lucide-react";
 import { api } from "../api";
 import { Loading, PageHeader } from "../components";
@@ -235,13 +235,23 @@ export default function GraphPage() {
       <PageHeader
         title="架构关系图"
         description="按架构层级查看输入、治理、模块和交付关系；影响模式只显示一次变化的证据链。"
-        actions={<button className="secondary-button" onClick={() => {
-          setSelectedId(null);
-          setViewMode("architecture");
-          setFocusEvent(eventOptions.at(-1)?.id ?? "");
-          setQuery("");
-          setTypes(new Set(["project", "module", "contract", "scenario", "user"]));
-        }}><X size={16} />重置视图</button>}
+        actions={<>
+          <a
+            className="secondary-button"
+            href={`${import.meta.env.BASE_URL}architecture.html`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ExternalLink size={16} />打开 Archify 架构图
+          </a>
+          <button className="secondary-button" onClick={() => {
+            setSelectedId(null);
+            setViewMode("architecture");
+            setFocusEvent(eventOptions.at(-1)?.id ?? "");
+            setQuery("");
+            setTypes(new Set(["project", "module", "contract", "scenario", "user"]));
+          }}><X size={16} />重置视图</button>
+        </>}
       />
       {error && <div className="alert">{error}</div>}
 

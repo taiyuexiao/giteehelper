@@ -1,0 +1,381 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "GiteeHelper 协作影响治理架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "change-impact",
+        "label": "变更影响",
+        "focus": [
+          "gitee",
+          "api",
+          "impact",
+          "database",
+          "web",
+          "feishu"
+        ],
+        "note": "从 Gitee 变更事件到负责人影响通知与审计。"
+      },
+      {
+        "id": "integration-repair",
+        "label": "联调修复",
+        "focus": [
+          "impact",
+          "integration",
+          "repair",
+          "cli",
+          "database"
+        ],
+        "note": "用契约桩增量联调，人工批准后生成修复 PR。"
+      },
+      {
+        "id": "collaboration",
+        "label": "协作闭环",
+        "focus": [
+          "gitee",
+          "web",
+          "cli",
+          "feishu",
+          "repair"
+        ],
+        "note": "配置、确认、修复与通知形成可追踪闭环。"
+      }
+    ],
+    "legend": {
+      "mode": "auto"
+    },
+    "repository": {
+      "url": "https://github.com/taiyuexiao/giteehelper",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "256bdfd21314a1da4b5a4122080e1191d5c75086"
+    }
+  },
+  "components": [
+    {
+      "id": "gitee",
+      "type": "external",
+      "label": "Gitee",
+      "sublabel": "Open API / WebHook",
+      "tag": "变更入口",
+      "sources": [
+        {
+          "path": "src/server/gitee.ts",
+          "label": "Gitee 客户端"
+        },
+        {
+          "path": "src/server/routes.ts",
+          "label": "WebHook 接收"
+        }
+      ],
+      "pos": [
+        30,
+        250
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "GiteeHelper API",
+      "sublabel": "事件路由与配置",
+      "tag": "控制平面",
+      "sources": [
+        {
+          "path": "src/server/routes.ts",
+          "label": "API 路由"
+        },
+        {
+          "path": "src/server/db.ts",
+          "label": "持久化"
+        }
+      ],
+      "pos": [
+        250,
+        250
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "feishu",
+      "type": "external",
+      "label": "飞书",
+      "sublabel": "群聊 / 私聊通知",
+      "tag": "协作出口",
+      "sources": [
+        {
+          "path": "src/server/feishu.ts",
+          "label": "通知发送"
+        }
+      ],
+      "pos": [
+        250,
+        30
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "impact",
+      "type": "backend",
+      "label": "影响分析引擎",
+      "sublabel": "规则、负责人与证据链",
+      "tag": "影响治理",
+      "sources": [
+        {
+          "path": "src/server/impact.ts",
+          "label": "影响分析"
+        }
+      ],
+      "pos": [
+        470,
+        250
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "integration",
+      "type": "backend",
+      "label": "增量联调引擎",
+      "sublabel": "上下游模块 / 契约桩",
+      "tag": "验证",
+      "sources": [
+        {
+          "path": "src/server/integration.ts",
+          "label": "联调编排"
+        }
+      ],
+      "pos": [
+        720,
+        250
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "repair",
+      "type": "backend",
+      "label": "修复工作流",
+      "sublabel": "Repair Bundle / 人工批准",
+      "tag": "修复",
+      "sources": [
+        {
+          "path": "src/server/repair.ts",
+          "label": "修复审批"
+        }
+      ],
+      "pos": [
+        470,
+        570
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web 控制台",
+      "sublabel": "React / Vite",
+      "tag": "人工交互",
+      "sources": [
+        {
+          "path": "src/client/App.tsx",
+          "label": "控制台入口"
+        }
+      ],
+      "pos": [
+        250,
+        430
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "CLI",
+      "sublabel": "本地验证 / CI",
+      "tag": "自动化",
+      "sources": [
+        {
+          "path": "src/cli/index.ts",
+          "label": "CLI 命令"
+        }
+      ],
+      "pos": [
+        720,
+        430
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "database",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "事件、影响、运行与审计",
+      "tag": "事实存储",
+      "sources": [
+        {
+          "path": "src/server/db.ts",
+          "label": "数据模型"
+        }
+      ],
+      "pos": [
+        980,
+        250
+      ],
+      "size": [
+        140,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "gitee-api",
+      "from": "gitee",
+      "to": "api",
+      "label": "WebHook / Open API",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -30
+    },
+    {
+      "id": "api-impact",
+      "from": "api",
+      "to": "impact",
+      "label": "归一化变更事件",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -30
+    },
+    {
+      "id": "impact-integration",
+      "from": "impact",
+      "to": "integration",
+      "label": "受影响模块 / 契约变更",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -30
+    },
+    {
+      "id": "impact-repair",
+      "from": "impact",
+      "to": "repair",
+      "label": "可修复发现",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        578,
+        382
+      ]
+    },
+    {
+      "id": "integration-database",
+      "from": "integration",
+      "to": "database",
+      "label": "联调快照",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -30
+    },
+    {
+      "id": "impact-database",
+      "from": "impact",
+      "to": "database",
+      "label": "影响与证据",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          540,
+          150
+        ],
+        [
+          1050,
+          150
+        ]
+      ],
+      "labelAt": [
+        795,
+        128
+      ]
+    },
+    {
+      "id": "repair-database",
+      "from": "repair",
+      "to": "database",
+      "label": "审批审计",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          920,
+          602
+        ],
+        [
+          920,
+          520
+        ],
+        [
+          1050,
+          520
+        ]
+      ],
+      "labelAt": [
+        750,
+        580
+      ]
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api",
+      "label": "配置 / 查询 / 审批",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 18
+    },
+    {
+      "id": "cli-integration",
+      "from": "cli",
+      "to": "integration",
+      "label": "执行增量联调",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 18
+    },
+    {
+      "id": "api-feishu",
+      "from": "api",
+      "to": "feishu",
+      "label": "影响通知卡片",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 18
+    }
+  ]
+}

@@ -10,3 +10,5 @@ data/repair-bundles/
 coverage/
 
 data/feishu-import/
+/public/architecture.html
+docs/diagrams/*.visual-check.*

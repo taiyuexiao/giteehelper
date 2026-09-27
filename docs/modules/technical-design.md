@@ -32,7 +32,7 @@ Gitee WebHook/Open API        Feishu Bot/API
 - 后端：TypeScript + Express；
 - 数据库：SQLite，使用 `node:sqlite`；
 - 前端：React + Vite + TypeScript；
-- 关系图：React Flow + 自定义分层节点/关系边；
+- 关系图：React Flow 负责真实数据对象与影响路径；跨组件系统架构使用 Archify 生成独立、可校验的架构图；
 - YAML：`yaml`；
 - 加密：Node `crypto.scrypt`；
 - 测试：`node:test` + `tsx`；
