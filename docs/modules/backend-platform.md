@@ -25,7 +25,7 @@
 - `GET /api/dashboard`、`GET /api/graph`
 - `GET/POST/PATCH /api/modules`
 - `GET/POST/PATCH /api/rules`
-- `GET/POST/PATCH /api/users`
+- `GET/POST/PATCH/DELETE /api/users/:id`
 - `GET /api/audit`
 - `GET/POST /api/runs`
 - `GET/POST /api/repairs`
@@ -64,3 +64,4 @@
 |---|---|---|
 | 2026-09-25 | 完成 schema、认证、RBAC、REST API、审计和种子数据 | 实施阶段 1 |
 | 2026-09-25 | 修复 SQLite 并行测试锁冲突 | BUG-001 |
+| 2026-09-27 | 增加用户负责模块汇总和用户删除接口 | 用户与身份 |
