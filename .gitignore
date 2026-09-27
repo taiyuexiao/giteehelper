@@ -8,3 +8,5 @@ data/repair-bundles/
 *.log
 .DS_Store
 coverage/
+
+data/feishu-import/

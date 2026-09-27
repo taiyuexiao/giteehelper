@@ -24,6 +24,7 @@
 | 技术设计 | [modules/technical-design.md](modules/technical-design.md) | ✅ | 定义 Node/SQLite/React 架构、数据模型、API、影响分析、联调和修复机制 |
 | 实施计划 | [modules/implementation-plan.md](modules/implementation-plan.md) | 🚧 | 将 MVP 分为数据、Gitee、通知、联调、GUI、CLI 和验收阶段 |
 | 开发准备 | [modules/development-preparation.md](modules/development-preparation.md) | ✅ | 工程骨架、配置、数据库、测试、构建、CLI 与安全基线已经验证 |
+| 飞书资料一次性导入 | [modules/feishu-import.md](modules/feishu-import.md) | ✅ | 导入产品、设计、技术、模块文档和真实分工映射 |
 | 使用指南 | [modules/usage-guide.md](modules/usage-guide.md) | ✅ | 快速启动、影响查看、增量联调、修复和真实事件接入 |
 | 后端平台 | [modules/backend-platform.md](modules/backend-platform.md) | ✅ | SQLite、认证、RBAC、REST API 与审计 |
 | Gitee/飞书接入 | [modules/gitee-feishu-integrations.md](modules/gitee-feishu-integrations.md) | ✅ | Gitee API/WebHook/同步/PR 与飞书通知 |
@@ -47,6 +48,7 @@
 | 2026-09-26 | 优化 | 为目标仓库增加可访问的帮助浮窗和填写示例 | Web 控制台 |
 | 2026-09-27 | 修复 | 帮助浮窗改为 Portal 顶层渲染，解决父容器截断 | Web 控制台 |
 | 2026-09-27 | 部署 | 部署到 Ubuntu/Docker 服务器并修复生产容器监听地址 | CLI 与打包 |
+| 2026-09-27 | 导入 | 从飞书云盘/多维表格一次性导入 16 份资料和 29 个真实工作项映射 | 飞书资料一次性导入 |
 
 ## 关键问题与解决
 - 现有工具分散：Gitee 可把原始事件推到飞书，AI 审查工具可修 PR，影响分析工具可算风险，但未发现完整覆盖本需求闭环的单体产品。
