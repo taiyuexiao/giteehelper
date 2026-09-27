@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, CircleDot, CircleHelp, Clock3, XCircle } from "lucide-react";
 
 export function PageHeader({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
@@ -62,11 +63,89 @@ export function EmptyState({ icon, title, text }: { icon: ReactNode; title: stri
 }
 
 export function HelpTooltip({ label, children }: { label: string; children: ReactNode }) {
+  const tooltipId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties>({ top: -9999, left: -9999, visibility: "hidden" });
+  const [arrowX, setArrowX] = useState(18);
+
+  const clearCloseTimer = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  };
+
+  const scheduleClose = () => {
+    clearCloseTimer();
+    closeTimer.current = window.setTimeout(() => setOpen(false), 120);
+  };
+
+  useEffect(() => () => clearCloseTimer(), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !tooltipRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const tooltip = tooltipRef.current.getBoundingClientRect();
+    const gap = 10;
+    const margin = 12;
+    const width = Math.min(390, window.innerWidth - margin * 2);
+    let left = trigger.left + trigger.width / 2 - width / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+
+    let top = trigger.bottom + gap;
+    if (top + tooltip.height > window.innerHeight - margin) {
+      top = Math.max(margin, trigger.top - tooltip.height - gap);
+    }
+
+    setPosition({ top, left, width, visibility: "visible" });
+    setArrowX(Math.max(16, Math.min(trigger.left + trigger.width / 2 - left, width - 16)));
+  }, [open]);
+
   return (
-    <span className="help-tooltip" tabIndex={0} role="button" aria-label={`${label}说明`}>
-      <CircleHelp size={15} />
-      <span className="help-tooltip-content" role="tooltip">{children}</span>
-    </span>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="help-tooltip"
+        aria-label={`${label}说明`}
+        aria-describedby={open ? tooltipId : undefined}
+        aria-expanded={open}
+        onMouseEnter={() => { clearCloseTimer(); setOpen(true); }}
+        onMouseLeave={scheduleClose}
+        onFocus={() => { clearCloseTimer(); setOpen(true); }}
+        onBlur={scheduleClose}
+        onClick={() => { clearCloseTimer(); setOpen(true); }}
+        onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+      >
+        <CircleHelp size={12} />
+      </button>
+      {open && createPortal(
+        <div
+          ref={tooltipRef}
+          id={tooltipId}
+          className="help-tooltip-content"
+          role="tooltip"
+          style={{ ...position, "--arrow-x": `${arrowX}px` } as CSSProperties}
+          onMouseEnter={clearCloseTimer}
+          onMouseLeave={scheduleClose}
+        >
+          {children}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
