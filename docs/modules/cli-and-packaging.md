@@ -40,6 +40,16 @@ giteehelper repair approve <repair-id>
 - CLI Doctor、manifest 和 contract 命令已实际运行；
 - 修复 Bundle 流程有 Node Test 覆盖。
 
+## Bug 与问题记录
+
+### BUG-001 Docker 容器只监听回环地址（2026-09-27，已解决）
+- 错误行为：WHEN Docker 将宿主机 8787 映射到容器 8787 THEN 服务只监听容器 `127.0.0.1`，宿主机和公网访问被连接重置。
+- 期望行为：WHEN 在生产模式运行容器 THEN 服务 SHALL 监听 `0.0.0.0`，允许 Docker 端口映射转发流量。
+- 不可破坏的行为：WHEN 本地开发模式运行 THEN 服务 SHALL CONTINUE TO 默认只监听 `127.0.0.1`。
+- 根因：Express 启动地址硬编码为 `127.0.0.1`，容器网络无法通过该地址访问进程。
+- 解决方式：根据 `NODE_ENV=production` 动态选择 `0.0.0.0`，开发模式保持 `127.0.0.1`。
+- 验证方式：容器内外健康检查返回 200，宿主机公网端口可访问。
+
 ## 已知限制
 - 尚未在 CI 中构建 Docker 镜像；
 - `repair test` 是用户本地测试结果的记录命令，不会自动猜测项目测试命令；
@@ -49,3 +59,4 @@ giteehelper repair approve <repair-id>
 | 日期 | 变更 | 关联需求 |
 |---|---|---|
 | 2026-09-26 | 完成 CLI、Repair 命令、Dockerfile 和 Compose | 实施阶段 6、7 |
+| 2026-09-27 | 修复 Docker 生产模式端口监听地址 | BUG-001 |

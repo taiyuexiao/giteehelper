@@ -24,6 +24,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
   res.status(500).json({ error: message });
 });
 
-app.listen(config.port, "127.0.0.1", () => {
-  console.log(`GiteeHelper development server listening on http://127.0.0.1:${config.port}`);
+const listenHost = config.isProduction ? "0.0.0.0" : "127.0.0.1";
+app.listen(config.port, listenHost, () => {
+  console.log(`GiteeHelper server listening on http://${listenHost}:${config.port}`);
 });
