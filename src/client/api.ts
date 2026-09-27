@@ -1,4 +1,5 @@
-const API = "/api";
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, "");
+const API = `${baseUrl}/api`;
 
 export class ApiError extends Error {
   status: number;

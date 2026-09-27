@@ -1,6 +1,9 @@
 services:
   giteehelper:
-    build: .
+    build:
+      context: .
+      args:
+        BASE_PATH: /giteehelper/
     restart: unless-stopped
     ports:
       - "8787:8787"
