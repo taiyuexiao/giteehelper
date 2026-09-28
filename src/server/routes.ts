@@ -5,11 +5,17 @@ import { config } from "./config.js";
 import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 import { createSession, currentUser, destroySession, hashPassword, login, requireAuth, requireRole } from "./auth.js";
 import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.js";
-import { createIntegrationRun, getRun, listModules } from "./integration.js";
+import { createIntegrationRun, getRun } from "./integration.js";
+import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, listWebhookDeliveries, recordWebhookDelivery } from "./commits.js";
+import { buildRepoGraph } from "./repograph.js";
+import { ingestGiteeWebhook } from "./ingest.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { cleanupMisleadingData } from "./cleanup.js";
-import { createBranch, createPullRequest, listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature } from "./gitee.js";
+import {
+  createBranch, createPullRequest, extractPushCommits, fetchCommitDetail, listCommits as listGiteeCommits,
+  listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature
+} from "./gitee.js";
 import { buildImpactCard, sendFeishuText } from "./feishu.js";
 import type { GraphData, GraphEdge, GraphNode, Impact, Role, Severity, User } from "../shared/types.js";
 
@@ -35,9 +41,9 @@ router.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "giteehelper",
-    version: "0.1.0",
+    version: "0.2.0",
     node: process.version,
-    database: config.databasePath,
+    database: "sqlite",
     giteeConfigured: Boolean(config.giteeToken),
     feishuConfigured: Boolean(config.feishuWebhookUrl)
   });
@@ -448,7 +454,7 @@ router.get("/runs/:id", requireAuth, (req, res) => {
   res.json({ ...run, combination: parseJson(run.combinationJson, []), result: parseJson(run.resultJson, {}) });
 });
 
-router.post("/runs", requireAuth, async (req, res) => {
+router.post("/runs", requireAuth, requireRole("admin", "maintainer", "reviewer", "developer"), async (req, res) => {
   const moduleKey = String((req.body as Record<string, unknown>).moduleKey ?? "");
   try {
     const run = await createIntegrationRun(moduleKey, Number((req.body as Record<string, unknown>).triggerEventId) || null);
@@ -458,7 +464,7 @@ router.post("/runs", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/modules/:id/integrate", requireAuth, async (req, res) => {
+router.post("/modules/:id/integrate", requireAuth, requireRole("admin", "maintainer", "reviewer", "developer"), async (req, res) => {
   const module = queryOne<{ moduleKey: string }>(`SELECT module_key AS moduleKey FROM modules WHERE id = ?`, [Number(req.params.id)]);
   if (!module) {
     res.status(404).json({ error: "module not found" });
@@ -514,7 +520,7 @@ router.get("/repairs/:id/files/:name", requireAuth, (req, res) => {
   res.download(file, name);
 });
 
-router.post("/repairs/:id/test", requireAuth, (req, res) => {
+router.post("/repairs/:id/test", requireAuth, requireRole("admin", "maintainer", "reviewer", "developer"), (req, res) => {
   const id = Number(req.params.id);
   execute(`UPDATE repair_bundles SET status = 'tested', test_report_json = ? WHERE id = ?`, [JSON.stringify({ status: "passed", testedAt: new Date().toISOString(), tester: actor(req)?.username }) , id]);
   audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "repair_test", "repair_bundle", id, { status: "passed" });
@@ -586,6 +592,8 @@ router.get("/integrations", requireAuth, (_req, res) => {
       configured: Boolean(config.feishuWebhookUrl),
       mode: config.feishuWebhookUrl ? "webhook" : "dry-run"
     },
+    commits: commitStats(),
+    deliveries: listWebhookDeliveries(10),
     settings: publicRuntimeSettings()
   });
 });
@@ -628,53 +636,105 @@ router.post("/gitee/sync", requireAuth, requireAdmin, async (req, res) => {
     res.status(400).json({ error: "GITEE_REPO is not configured" });
     return;
   }
+  const only = String((req.body as Record<string, unknown>)?.only ?? "all");
   try {
-    const pulls = await listPullRequests(config.giteeRepo);
     const saved: Array<{ id: number; impacts: number }> = [];
-    for (const pull of pulls) {
-      const mergedAt = pull.merged_at;
-      const event: EventInput = {
-        source: "gitee",
-        sourceId: `pull-${String(pull.id ?? pull.number)}`,
-        eventType: "pull_request",
-        action: mergedAt ? "merged" : String(pull.state ?? "open"),
-        title: String(pull.title ?? `Pull Request ${pull.number}`),
-        author: String((pull.user as Record<string, unknown> | undefined)?.login ?? "unknown"),
-        branch: String((pull.base as Record<string, unknown> | undefined)?.ref ?? config.giteeDefaultBranch),
-        url: String(pull.html_url ?? ""),
-        payload: { pull_request: pull, files: [], body: String(pull.body ?? "") }
-      };
-      const result = persistEventAndImpacts(event);
-      saved.push({ id: result.eventId, impacts: result.impacts.length });
+    if (only !== "commits") {
+      const pulls = await listPullRequests(config.giteeRepo);
+      for (const pull of pulls) {
+        const mergedAt = pull.merged_at;
+        const event: EventInput = {
+          source: "gitee",
+          sourceId: `pull-${String(pull.id ?? pull.number)}`,
+          eventType: "pull_request",
+          action: mergedAt ? "merged" : String(pull.state ?? "open"),
+          title: String(pull.title ?? `Pull Request ${pull.number}`),
+          author: String((pull.user as Record<string, unknown> | undefined)?.login ?? "unknown"),
+          branch: String((pull.base as Record<string, unknown> | undefined)?.ref ?? config.giteeDefaultBranch),
+          url: String(pull.html_url ?? ""),
+          payload: { pull_request: pull, files: [], body: String(pull.body ?? "") }
+        };
+        const result = persistEventAndImpacts(event);
+        saved.push({ id: result.eventId, impacts: result.impacts.length });
+      }
     }
-    audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "gitee_sync", "project", config.giteeRepo, { pulls: saved.length });
-    res.json({ ok: true, pulls: saved.length, events: saved });
+
+    // 提交补齐：WebHook 需要公网回调，手动同步用于首次建图和断档回填
+    const commitsImported: Array<{ sha: string; conflict: boolean }> = [];
+    let detailBudget = 20;
+    if (only !== "pulls") {
+      const recent = await listGiteeCommits(config.giteeRepo, config.giteeDefaultBranch, 30);
+      for (const commit of recent) {
+        if (findCommitBySha(commit.sha)) continue;
+        let enriched = commit;
+        if (detailBudget > 0) {
+          detailBudget -= 1;
+          const detail = await fetchCommitDetail(config.giteeRepo, commit.sha).catch(() => undefined);
+          if (detail) enriched = { ...commit, ...detail };
+        }
+        const result = ingestCommit(enriched);
+        if (result.created) commitsImported.push({ sha: commit.sha, conflict: Boolean(result.analysis?.conflict) });
+      }
+    }
+
+    audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "gitee_sync", "project", config.giteeRepo, {
+      pulls: saved.length, commits: commitsImported.length
+    });
+    res.json({
+      ok: true,
+      pulls: saved.length,
+      events: saved,
+      commits: commitsImported.length,
+      conflicts: commitsImported.filter((commit) => commit.conflict).length
+    });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Gitee sync failed" });
   }
 });
 
-router.post("/webhooks/gitee", async (req, res) => {
+router.post("/webhooks/gitee", (req, res) => {
   const token = req.header("x-gitee-token");
   const timestamp = req.header("x-gitee-timestamp");
+  const headerEvent = req.header("x-gitee-event");
+  const hookName = headerEvent ?? null;
+  const payload = (req.body ?? {}) as Record<string, unknown>;
   if (!verifyGiteeSignature(config.giteeWebhookSecret, token, timestamp)) {
+    recordWebhookDelivery({ hookName, status: "rejected", detail: "签名校验失败或未配置 WebHook Secret" });
     res.status(401).json({ error: "invalid webhook signature" });
     return;
   }
-  const event = normalizeGiteeEvent(req.body as Record<string, unknown>, req.header("x-gitee-event") ?? undefined);
-  const saved = persistEventAndImpacts(event);
-  const impacts = saved.impacts;
-  const runs = [];
-  for (const impact of impacts) {
-    if (!impact.moduleId) continue;
-    const module = queryOne<{ moduleKey: string }>(`SELECT module_key AS moduleKey FROM modules WHERE id = ?`, [impact.moduleId]);
-    if (module) runs.push(await createIntegrationRun(module.moduleKey, saved.eventId));
+  // 先确认接收再后台分析：Gitee 对回调有超时限制，慢响应会导致重复投递
+  res.status(202).json({ ok: true, accepted: true });
+  setImmediate(() => {
+    void ingestGiteeWebhook(payload, headerEvent ?? undefined, hookName).catch((error) => {
+      console.error("[gitee webhook]", error instanceof Error ? error.message : error);
+    });
+  });
+});
+
+router.get("/webhooks/deliveries", requireAuth, (_req, res) => {
+  res.json(listWebhookDeliveries(20));
+});
+
+router.get("/repo/graph", requireAuth, (req, res) => {
+  const requested = Number(req.query.limit);
+  const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.max(Math.trunc(requested), 10), 300) : 80;
+  res.json(buildRepoGraph(limit));
+});
+
+router.get("/commits", requireAuth, (req, res) => {
+  const requested = Number(req.query.limit);
+  const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.trunc(requested), 300) : 120;
+  res.json({ commits: listCommits(limit), stats: commitStats() });
+});
+
+router.get("/commits/:sha", requireAuth, (req, res) => {
+  const commit = getCommit(String(req.params.sha));
+  if (!commit) {
+    res.status(404).json({ error: "commit not found" });
+    return;
   }
-  if (impacts.length) {
-    const card = buildImpactCard(event.title, impacts);
-    await sendFeishuText(card);
-  }
-  res.status(202).json({ ok: true, eventId: saved.eventId, impacts: impacts.length, runs: runs.map((run) => run.id) });
+  res.json(commit);
 });
 
 router.get("/gitee/status", requireAuth, async (_req, res) => {
@@ -687,6 +747,11 @@ router.get("/gitee/status", requireAuth, async (_req, res) => {
   } catch (error) {
     res.status(400).json({ configured: true, ok: false, error: error instanceof Error ? error.message : "Gitee connection failed" });
   }
+});
+
+// 未匹配的 /api 路径必须返回 JSON 404；否则会落到前端静态兜底并返回 200 + index.html
+router.use((req, res) => {
+  res.status(404).json({ error: "route not found", path: req.originalUrl });
 });
 
 export default router;

@@ -140,7 +140,7 @@ export interface DashboardData {
 export interface GraphNode {
   id: string;
   label: string;
-  type: "project" | "module" | "contract" | "scenario" | "user" | "event";
+  type: "project" | "module" | "contract" | "scenario" | "user" | "event" | "author" | "commit" | "pull";
   meta?: Record<string, unknown>;
 }
 
@@ -155,4 +155,66 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export interface RepoCommitMeta {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  summary: string;
+  kind: string;
+  kindLabel: string;
+  scope: string | null;
+  issueRefs: string[];
+  author: string;
+  authorLogin: string | null;
+  committedAt: string | null;
+  receivedAt: string;
+  ageHours: number | null;
+  isNew: boolean;
+  justArrived: boolean;
+  branch: string | null;
+  url: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  areas: string[];
+  severity: Severity | null;
+  conflict: boolean;
+  pullNumber: number | null;
+  pullTitle: string | null;
+  affectedModules: Array<{ id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string }>;
+  files: Array<{ path: string; additions?: number; deletions?: number }>;
+}
+
+export interface RepoOwnerCluster {
+  owner: string;
+  fill: string;
+  fillSoft: string;
+  stroke: string;
+  text: string;
+  moduleIds: string[];
+  commitIds: string[];
+  moduleNames: string[];
+}
+
+export interface RepoGraphStats {
+  totalCommits: number;
+  shownCommits: number;
+  conflicts: number;
+  authors: number;
+  last24h: number;
+  unattributedCommits: number;
+  latestCommitAt: string | null;
+  lastDeliveryAt: string | null;
+  lastDeliveryStatus: string | null;
+  modulesWithoutPaths: number;
+  generatedAt: string;
+}
+
+export interface RepoGraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  clusters: RepoOwnerCluster[];
+  stats: RepoGraphStats;
 }

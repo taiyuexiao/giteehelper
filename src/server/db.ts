@@ -145,6 +145,54 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   detail_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS commits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  sha TEXT NOT NULL,
+  short_sha TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  author_login TEXT,
+  author_name TEXT,
+  author_email TEXT,
+  committed_at TEXT,
+  branch TEXT,
+  url TEXT,
+  files_json TEXT NOT NULL DEFAULT '[]',
+  additions INTEGER NOT NULL DEFAULT 0,
+  deletions INTEGER NOT NULL DEFAULT 0,
+  changed_files INTEGER NOT NULL DEFAULT 0,
+  pull_number INTEGER,
+  pull_title TEXT,
+  event_id INTEGER REFERENCES change_events(id) ON DELETE SET NULL,
+  severity TEXT,
+  conflict INTEGER NOT NULL DEFAULT 0,
+  analysis_json TEXT NOT NULL DEFAULT '{}',
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, sha)
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  hook_name TEXT,
+  event_type TEXT,
+  action TEXT,
+  status TEXT NOT NULL,
+  detail TEXT,
+  event_id INTEGER,
+  commits INTEGER NOT NULL DEFAULT 0,
+  impacts INTEGER NOT NULL DEFAULT 0,
+  conflicts INTEGER NOT NULL DEFAULT 0,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_commits_committed_at ON commits(committed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created_at ON webhook_deliveries(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_impacts_event ON impacts(event_id);
 `);
 
 export function queryAll<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {

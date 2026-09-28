@@ -150,12 +150,20 @@ export function HelpTooltip({ label, children }: { label: string; children: Reac
 }
 
 export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    closeRef.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header">
-          <h2>{title}</h2>
-          <button className="icon-button" onClick={onClose} title="关闭">×</button>
+          <h2 id={titleId}>{title}</h2>
+          <button ref={closeRef} className="icon-button" onClick={onClose} title="关闭" aria-label="关闭">×</button>
         </header>
         <div className="modal-body">{children}</div>
       </section>

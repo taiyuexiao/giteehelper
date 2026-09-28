@@ -2,7 +2,7 @@
 
 > Gitee 上游变化的下游影响路由、增量联调与安全修复助手。
 
-GiteeHelper 面向多人协作研发项目。它监听 Gitee 中规范、需求、开发文档、Review 评论和代码 PR 的变化，分析这些变化影响哪个模块、哪位负责人和哪些未完成工作，并通过 Gitee 与飞书给出可执行的下一步。
+GiteeHelper 面向多人协作研发项目。它监听 Gitee 中规范、需求、开发文档、Review 评论和代码提交的变化，分析这些变化影响哪个模块、哪位负责人和哪些未完成工作，并通过 Gitee 与飞书给出可执行的下一步。新提交到达后会立即分析，冲突对象即时收到飞书提醒，并同步呈现在 3D 仓库全景上。
 
 它不是另一个简单的 AI Code Review，而是连接“变化 → 影响 → 联调 → 修复 → 协作”的工程基础设施。
 
@@ -28,6 +28,15 @@ GiteeHelper 将这些过程变成可追踪、可验证、可协作的工作流�
 - 生成五级影响：`blocking`、`contract`、`implementation`、`clarification`、`informational`；
 - 输出影响对象、负责人、证据和下一步；
 - 支持未提交文档、已提交 PR、已合并设计和代码 PR 等不同状态。
+
+### 仓库全景与实时提交同步
+
+- WebHook 收到 Push 后立即确认并后台分析，不会因为回调超时被 Gitee 重投；
+- 按提交粒度入库：谁提交、改了什么文件、处理了什么问题、影响了哪个模块，逐条可追溯；
+- 从提交信息解析「处理了什么问题」：约定式提交类型、scope、正文中的问题描述、`#123`/`WS-2283` 需求编号；
+- 只有 `blocking` / `contract` 级冲突才发飞书，并直接点名模块与负责人，无冲突不打扰群；
+- 3D 仓库全景图：按负责人用低饱和度浅色分区着色，新提交带脉冲特效，悬停/点击即可查看提交作用与影响结论；
+- WebHook 投递日志可见每次回调的状态与结果，未被公网回调覆盖的时段可用「补齐提交」手动回填。
 
 ### 增量联调
 
@@ -89,7 +98,8 @@ Gitee WebHook/Open API        Feishu Webhook/API
 - Express
 - SQLite
 - React + Vite
-- React Flow
+- React Flow（2D 关系图）
+- three.js + 3d-force-graph（3D 仓库全景）
 - Node Test
 - Docker Compose
 
@@ -140,7 +150,9 @@ npm run dev
 - API：`http://127.0.0.1:8787`
 - 健康检查：`http://127.0.0.1:8787/api/health`
 
-首次登录使用 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`。
+> 8787 与 5173 很容易被本机其他项目占用。被占用时用 `PORT=8876 npm run dev:server` 换端口，并同步修改 `vite.config.ts` 里的代理目标。
+
+首次登录使用 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`。未配置 `ADMIN_PASSWORD` 时，系统不会写入固定默认口令，而是生成一个随机初始密码并在启动日志中打印一次。
 
 ### 4. 生产构建
 
@@ -175,6 +187,8 @@ Gitee WebHook 支持两种验证：
 - `X-Gitee-Token` 等于配置的 Secret；
 - `X-Gitee-Token` 为基于时间戳和 Secret 的 HMAC-SHA256 签名。
 
+实时性完全由 WebHook 驱动，系统不做轮询。回调地址必须是 Gitee 能访问到的公网地址；「接入设置 → 实时接收状态」会列出最近 10 次投递的时间、事件、状态、提交数和冲突数，被拒绝的投递也会记录原因，便于确认回调是否真的打通。没有公网回调时，可在「仓库全景」点击“补齐提交”（或调用 `POST /api/gitee/sync`）手动回填最近 30 个提交。
+
 ## 飞书接入
 
 MVP 使用飞书群自定义机器人：
@@ -185,6 +199,8 @@ MVP 使用飞书群自定义机器人：
 4. 在“接入设置 → 发送测试消息”验证。
 
 未配置飞书时，通知会进入 dry-run 审计，不会产生外部消息。
+
+通知有两类：影响提示（`buildImpactCard`）和新提交冲突提醒（`buildCommitConflictCard`）。后者只在出现 `blocking` / `contract` 级冲突时发送，并按对象给出模块、严重度和负责人。
 
 正式产品可升级为飞书企业自建应用，以支持私聊、用户身份映射和交互卡片。
 
@@ -227,18 +243,25 @@ npm run build
 npm run cli -- manifest validate
 ```
 
-当前自动化测试覆盖：
+`npm test` 会自动把数据库指向 `data/test/giteehelper-test.db`（`pretest` 先清空），不会触碰 `data/giteehelper.db` 里的真实数据。
+
+当前 25 个自动化测试用例覆盖：
 
 - WebHook 签名与事件标准化；
+- 影响匹配精度（深层路径、无关路径、中文分词、停用词剪枝）；
+- 提交语义解析、提交入库幂等与冲突判定；
+- 契约版本语义化范围兼容；
+- 负责人配色与 3D 图谱数据结构；
 - 规范/Review 影响分析；
 - 增量联调与契约 Stub；
-- 密码加密；
-- 数据种子；
-- Repair Bundle 与批准边界。
+- 密码加密与数据种子；
+- Repair Bundle 与批准边界；
+- 误导数据清理。
 
 ## 项目文档
 
 - [项目总览](docs/PROJECT.md)
+- [仓库全景与实时提交同步](docs/modules/repo-panorama.md)
 - [产品规格](docs/modules/product-spec.md)
 - [技术设计](docs/modules/technical-design.md)
 - [实施计划](docs/modules/implementation-plan.md)
@@ -260,7 +283,10 @@ npm run cli -- manifest validate
 ## 当前限制
 
 - 单项目、单组织 MVP；
-- 规则驱动的影响分析，不依赖外部大模型；
+- 规则驱动的影响分析，不依赖外部大模型，因此「提交处理了什么问题」取决于提交信息本身写得是否清楚；
+- 实时性依赖 Gitee WebHook 可达，没有公网回调时只能手动补齐；
+- 3D 仓库全景需要 WebGL，单次最多渲染 300 个提交节点；
+- 负责人颜色由名称哈希派生，人数很多时可能出现相近色；
 - 飞书目前支持群机器人文本通知；
 - Repair.diff 的真实代码生成需要接入编码 Agent；
 - 原型工具版本差异分析属于后续适配器；
@@ -274,4 +300,6 @@ npm run cli -- manifest validate
 - Agent 生成真实修复代码和 stacked PR；
 - 跨仓库关系与组织级 WebHook；
 - 规则 dry-run、发布审批和版本 diff；
-- 容器化隔离 Runner 与长 E2E 调度。
+- 容器化隔离 Runner 与长 E2E 调度；
+- 提交与 PR 的语义摘要接入大模型，进一步降低对提交信息书写质量的依赖；
+- 3D 图谱按时间轴回放仓库演进过程。

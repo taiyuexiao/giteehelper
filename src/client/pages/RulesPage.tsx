@@ -18,14 +18,21 @@ const blank = {
 };
 
 export default function RulesPage() {
-  const [rules, setRules] = useState<RuleRow[]>([]);
+  const [rules, setRules] = useState<RuleRow[] | null>(null);
   const [editing, setEditing] = useState<RuleRow | typeof blank | null>(null);
   const [yamlText, setYamlText] = useState("");
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const load = () => api<RuleRow[]>("/rules").then(setRules).catch((reason) => setError(String(reason)));
+  const load = async () => {
+    try {
+      setRules(await api<RuleRow[]>("/rules"));
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
   useEffect(() => { void load(); }, []);
 
   function edit(rule: RuleRow | typeof blank) {
@@ -42,7 +49,7 @@ export default function RulesPage() {
       const parsed = YAML.parse(yamlText);
       if ("id" in editing) await api(`/rules/${editing.id}`, { method: "PATCH", body: JSON.stringify(parsed) });
       else await api("/rules", { method: "POST", body: JSON.stringify(parsed) });
-      setEditing(null); setMessage("规则已保存并生成新版本"); await load();
+      setEditing(null); setError(""); setMessage("规则已保存并生成新版本"); await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -59,7 +66,6 @@ export default function RulesPage() {
     }
   }
 
-  if (!rules) return <Loading />;
   return (
     <>
       <PageHeader title="规则编辑器" description="规则采用版本化配置；保存会增加版本号并写入审计。" actions={<button className="primary-button" onClick={() => edit(blank)}><Plus size={16} />新建规则</button>} />
@@ -67,6 +73,7 @@ export default function RulesPage() {
       {message && <div className="success">{message}</div>}
       <section className="panel">
         <div className="panel-header"><div><h2>影响规则</h2><p>条件同时命中时采用最高严重度。</p></div><button className="secondary-button" onClick={() => void runPreview()}><FlaskConical size={16} />运行预览</button></div>
+        {!rules ? <Loading /> : (
         <div className="rule-list">
           {rules.map((rule) => (
             <article key={rule.id} className={rule.enabled ? "rule-item" : "rule-item disabled"}>
@@ -78,6 +85,7 @@ export default function RulesPage() {
             </article>
           ))}
         </div>
+        )}
       </section>
       {preview && <section className="panel"><div className="panel-header"><div><h2>Dry-run 结果</h2></div></div><pre className="code-block">{preview}</pre></section>}
       {editing && (

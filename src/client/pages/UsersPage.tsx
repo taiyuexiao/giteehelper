@@ -8,7 +8,7 @@ const roles: Role[] = ["admin", "maintainer", "reviewer", "developer", "observer
 const roleLabels: Record<Role, string> = { admin: "管理员", maintainer: "维护者", reviewer: "审查者", developer: "开发者", observer: "观察者" };
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<User[] | null>(null);
   const [editing, setEditing] = useState<User | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ username: "", displayName: "", role: "developer", email: "", giteeLogin: "", feishuUserId: "", password: "" });
@@ -16,10 +16,19 @@ export default function UsersPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const load = () => api<User[]>("/users").then(setUsers).catch((reason) => setError(String(reason)));
+  const load = async () => {
+    try {
+      setUsers(await api<User[]>("/users"));
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
   useEffect(() => { void load(); }, []);
 
   async function saveUser() {
+    setError("");
+    setMessage("");
     try {
       const payload = { ...form, role: form.role as Role };
       if (creating) await api("/users", { method: "POST", body: JSON.stringify(payload) });
@@ -32,6 +41,8 @@ export default function UsersPage() {
 
   async function deleteUser() {
     if (!deleting) return;
+    setError("");
+    setMessage("");
     try {
       await api(`/users/${deleting.id}`, { method: "DELETE" });
       setDeleting(null);
@@ -58,6 +69,7 @@ export default function UsersPage() {
       {error && <div className="alert">{error}</div>}
       {message && <div className="success">{message}</div>}
       <section className="panel">
+        {!users ? <Loading /> : (
         <div className="table-wrap">
           <table>
             <thead><tr><th>用户</th><th>角色</th><th>负责模块 / 工作项</th><th>Gitee</th><th>飞书</th><th>状态</th><th>操作</th></tr></thead>
@@ -88,6 +100,7 @@ export default function UsersPage() {
             </tbody>
           </table>
         </div>
+        )}
       </section>
       {(creating || editing) && (
         <Modal title={creating ? "新建用户" : `编辑 ${editing?.displayName}`} onClose={() => { setCreating(false); setEditing(null); }}>

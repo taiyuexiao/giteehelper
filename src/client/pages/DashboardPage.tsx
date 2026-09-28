@@ -11,7 +11,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(0);
 
-  const load = () => api<DashboardData>("/dashboard").then(setData).catch((reason) => setError(String(reason)));
+  const load = () => api<DashboardData>("/dashboard").then((data) => { setData(data); setError(""); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   useEffect(() => { void load(); }, []);
 
   async function makeRepair(impactId: number) {
@@ -26,8 +26,6 @@ export default function DashboardPage() {
     }
   }
 
-  if (!data) return <Loading />;
-
   return (
     <>
       <PageHeader
@@ -36,6 +34,7 @@ export default function DashboardPage() {
         actions={<button className="secondary-button" onClick={() => void load()}><Activity size={16} />刷新</button>}
       />
       {error && <div className="alert">{error}</div>}
+      {!data ? <Loading /> : <>
 
       <section className="metric-grid">
         <article className="metric"><span>开放影响</span><strong>{data.stats.openImpacts}</strong><MessageSquareWarning size={19} /></article>
@@ -96,6 +95,7 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
+      </>}
     </>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { Loading, PageHeader } from "../components";
+import { GitCommitHorizontal } from "lucide-react";
 import type { GraphData, GraphEdge, GraphNode } from "../../shared/types";
 
 type EntityType = GraphNode["type"];
@@ -28,7 +29,10 @@ const typeLabels: Record<EntityType, string> = {
   contract: "契约",
   scenario: "场景",
   user: "人员",
-  event: "事件"
+  event: "事件",
+  author: "提交人",
+  commit: "提交",
+  pull: "PR"
 };
 
 const typeIcons: Record<EntityType, typeof Boxes> = {
@@ -37,7 +41,10 @@ const typeIcons: Record<EntityType, typeof Boxes> = {
   contract: FileCode2,
   scenario: Workflow,
   user: UserRound,
-  event: GitPullRequest
+  event: GitPullRequest,
+  author: UserRound,
+  commit: GitCommitHorizontal,
+  pull: GitPullRequest
 };
 
 const typeColors: Record<EntityType, string> = {
@@ -46,7 +53,10 @@ const typeColors: Record<EntityType, string> = {
   contract: "#c66c2c",
   scenario: "#607b87",
   user: "#925b72",
-  event: "#b8443c"
+  event: "#b8443c",
+  author: "#6f8b96",
+  commit: "#39809c",
+  pull: "#7d6bb0"
 };
 
 function isLegacy(node: GraphNode) {
@@ -71,8 +81,8 @@ function visibleGraphNodes(data: GraphData, ids: Set<string>): GraphNode[] {
 
 function toFlowNodes(data: GraphData, ids: Set<string>, selectedId: string | null): EntityFlowNode[] {
   const visible = visibleGraphNodes(data, ids);
-  const counters: Record<EntityType, number> = { project: 0, module: 0, contract: 0, scenario: 0, user: 0, event: 0 };
-  const x: Record<EntityType, number> = { user: 18, project: 330, module: 330, contract: 690, scenario: 1035, event: 1375 };
+  const counters: Record<EntityType, number> = { project: 0, module: 0, contract: 0, scenario: 0, user: 0, event: 0, author: 0, commit: 0, pull: 0 };
+  const x: Record<EntityType, number> = { user: 18, project: 330, module: 330, contract: 690, scenario: 1035, event: 1375, author: 18, commit: 1035, pull: 690 };
   return visible.map((node) => {
     const index = counters[node.type]++;
     const y = node.type === "project" ? -60 : 78 + index * 112;
@@ -164,7 +174,11 @@ export default function GraphPage() {
   const visibleIds = useMemo(() => {
     if (!data) return new Set<string>();
     const clean = data.nodes.filter((node) => !isLegacy(node));
-    const topLevelModules = clean.filter((node) => node.type === "module" && String(node.meta?.key ?? "").startsWith("module-"));
+    const moduleNodes = clean.filter((node) => node.type === "module");
+    // 优先展示导入的顶层工作项模块；没有这类 key 时回退到全部模块，
+    // 否则在只有普通模块的项目里架构总览会是一片空白。
+    const prefixedModules = moduleNodes.filter((node) => String(node.meta?.key ?? "").startsWith("module-"));
+    const topLevelModules = prefixedModules.length ? prefixedModules : moduleNodes;
     let ids = new Set<string>();
 
     if (viewMode === "architecture") {
@@ -228,7 +242,14 @@ export default function GraphPage() {
     });
   }
 
-  if (!data) return <Loading />;
+  if (!data) {
+    return (
+      <>
+        <PageHeader title="架构关系图" description="按架构层级查看输入、治理、模块和交付关系。" />
+        {error ? <div className="alert">{error}</div> : <Loading />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -324,7 +345,7 @@ export default function GraphPage() {
             <div className="graph-inspector-empty">
               <Network size={27} />
               <h2>选择架构节点</h2>
-              <p>架构总览默认只显示 8 个顶层模块及其人员、契约和场景。点击节点查看关系。</p>
+              <p>架构总览默认只显示顶层模块及其人员、契约和场景。点击节点查看关系。</p>
             </div>
           ) : (
             <>

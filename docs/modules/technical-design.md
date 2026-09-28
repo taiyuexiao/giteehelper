@@ -34,7 +34,7 @@ Gitee WebHook/Open API        Feishu Bot/API
 - 前端：React + Vite + TypeScript；
 - 关系图：React Flow 负责真实数据对象与影响路径；跨组件系统架构使用 Archify 生成独立、可校验的架构图；
 - YAML：`yaml`；
-- 加密：Node `crypto.scrypt`；
+- 加密：`SESSION_SECRET` 经 `crypto.scrypt` 派生 32 字节密钥，Secret 使用 AES-256-GCM 加密后存储，格式为 `enc:v1:{iv,tag,ciphertext}`；
 - 测试：`node:test` + `tsx`；
 - 部署：Docker Compose，单机 MVP；
 - 外部调用：Gitee Open API、飞书机器人 API。
@@ -176,6 +176,11 @@ Gitee 适配器将：
 6. **人员路由**：负责人、提交者、审查者、合并者、管理员；
 7. **动作生成**：澄清、修改设计、补契约、本地修复、联调、忽略。
 
+### 匹配精度
+- 路径匹配把 `**` 翻译为跨目录通配、`*` 只匹配单个路径段，因此 `src/server/**` 能命中任意深度的文件，不再只匹配一层目录；
+- 语义匹配只取模块名、模块 Key 和共享场景，契约 Key 不再参与模糊匹配；`api`、`docs`、`review`、`更新`、`修复` 等工程通用词作为停用词剔除；
+- 同时命中过多模块的语义词没有区分度，直接丢弃，避免整仓噪声。
+
 ### 严重度
 `blocking > contract > implementation > clarification > informational`
 
@@ -233,21 +238,32 @@ README.md
 - Runner 与 API 分离，测试命令在隔离工作目录执行。
 
 ## 11. 部署
+`docker-compose.yml` 只定义一个服务：容器内 Express 同时提供 REST API 和构建后的静态前端。
+
 ```yaml
 services:
-  api:
-    build: .
+  giteehelper:
+    build:
+      context: .
+      args:
+        BASE_PATH: /giteehelper/
+    restart: unless-stopped
     ports: ["8787:8787"]
     env_file: .env
     volumes:
       - ./data:/app/data
-  web:
-    build: .
-    command: npm run preview
-    ports: ["5173:5173"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 ```
 
-MVP 也可以使用 `npm run dev` 同时启动 API 和 Vite。生产部署前必须更换默认管理员密码、Gitee Token 和飞书 Secret。
+- 容器内默认 `PORT=8787`，健康检查走 `/api/health`，失败会按上面的间隔重试；
+- `BASE_PATH` 是构建参数（映射到 `VITE_BASE_PATH`），用于把控制台部署在反向代理的子路径（例如 `/giteehelper/`）下，默认 `/`；
+- 数据通过 `./data:/app/data` 持久化，不再需要单独的 `web` 服务。
+
+开发期仍可用 `npm run dev` 同时启动 API（8787）和 Vite（5173）。生产部署前必须更换默认管理员密码、Gitee Token 和飞书 Secret。
 
 ## 12. 测试策略
 - 单元测试：影响分类、规则匹配、签名验证、版本解析；

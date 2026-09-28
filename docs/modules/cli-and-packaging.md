@@ -38,7 +38,9 @@ giteehelper repair approve <repair-id>
 - `npm run build` 通过；
 - Docker 单服务构建定义完成；
 - CLI Doctor、manifest 和 contract 命令已实际运行；
-- 修复 Bundle 流程有 Node Test 覆盖。
+- 修复 Bundle 流程有 Node Test 覆盖；
+- 测试与生产数据隔离：`npm test` 前由 `pretest` 执行 `scripts/reset-test-db.mjs`，并把 `DATABASE_PATH` 指向 `data/test/giteehelper-test.db`。此前测试直接连 `data/giteehelper.db`，`seed()`、修复包创建和清理用例都会改写真实数据（真实库里因此留下 21 条由测试生成的「已批准」修复包），现在真实库不再被测试触碰；
+- 当前共 25 个测试用例，覆盖 WebHook 签名与事件标准化、影响匹配精度、提交语义解析与幂等、契约版本兼容、负责人配色、联调桩、Repair Bundle 与审批边界、误导数据清理。
 
 ## Bug 与问题记录
 
@@ -51,8 +53,9 @@ giteehelper repair approve <repair-id>
 - 验证方式：容器内外健康检查返回 200，宿主机公网端口可访问。
 
 ## 已知限制
-- 尚未在 CI 中构建 Docker 镜像；
+- 尚未在 CI 中构建 Docker 镜像，仓库内也没有 lint / formatter 配置；
 - `repair test` 是用户本地测试结果的记录命令，不会自动猜测项目测试命令；
+- 测试脚本用 `DATABASE_PATH=...` 前缀传环境变量，依赖 POSIX shell，Windows 原生终端需自行设置；
 - MCP 暴露尚未实现。
 
 ## 变更历史
@@ -60,3 +63,5 @@ giteehelper repair approve <repair-id>
 |---|---|---|
 | 2026-09-26 | 完成 CLI、Repair 命令、Dockerfile 和 Compose | 实施阶段 6、7 |
 | 2026-09-27 | 修复 Docker 生产模式端口监听地址 | BUG-001 |
+| 2026-09-28 | 测试改用独立数据库，新增 14 个用例（共 25 个） | 测试隔离 |
+| 2026-09-28 | `doctor` 等命令启动时加载 Secret Store，修复已配置项被报成 missing | 诊断准确性 |

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Boxes, CheckCircle2, FileCode2, GitBranch, Play, Plus, Save } from "lucide-react";
+import { Boxes, FileCode2, Play, Plus, Save } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { EmptyState, Loading, Modal, PageHeader, StatusBadge } from "../components";
 import type { User } from "../../shared/types";
@@ -11,22 +12,26 @@ type ModuleRow = {
 };
 type ContractRow = { id: number; contractKey: string; version: string; kind: string; ownerName?: string };
 
-export default function ModulesPage() {
-  const [modules, setModules] = useState<ModuleRow[]>([]);
+export default function ModulesPage({ user }: { user: { role: string } }) {
+  const navigate = useNavigate();
+  const [modules, setModules] = useState<ModuleRow[] | null>(null);
   const [contracts, setContracts] = useState<ContractRow[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [form, setForm] = useState({ moduleKey: "", name: "", ownerUserId: "", status: "not_started", paths: "", scenarios: "", description: "", testCommand: "" });
+  const canEdit = user.role === "admin" || user.role === "maintainer";
+  const canRunIntegration = canEdit || user.role === "reviewer" || user.role === "developer";
 
   const load = async () => {
     const [moduleData, contractData, userData] = await Promise.all([
       api<ModuleRow[]>("/modules"), api<ContractRow[]>("/contracts"), api<User[]>("/users")
     ]);
     setModules(moduleData); setContracts(contractData); setUsers(userData);
+    setError("");
   };
-  useEffect(() => { void load().catch((reason) => setError(String(reason))); }, []);
+  useEffect(() => { void load().catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }, []);
 
   async function save() {
     try {
@@ -41,6 +46,7 @@ export default function ModulesPage() {
         })
       });
       setOpen(false);
+      setError("");
       setMessage("模块已创建");
       await load();
     } catch (reason) {
@@ -51,8 +57,9 @@ export default function ModulesPage() {
   async function integrate(module: ModuleRow) {
     try {
       const run = await api<{ id: number; status: string }>(`/modules/${module.id}/integrate`, { method: "POST", body: JSON.stringify({}) });
+      setError("");
       setMessage(`${module.name} 联调完成：${run.status}`);
-      window.setTimeout(() => window.location.assign(`/runs?run=${run.id}`), 300);
+      navigate(`/runs?run=${run.id}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -62,23 +69,25 @@ export default function ModulesPage() {
     <>
       <PageHeader
         title="模块与契约"
-        description="维护模块负责人、路径、场景、上下游契约和联调命令。"
-        actions={<button className="primary-button" onClick={() => setOpen(true)}><Plus size={16} />新建模块</button>}
+        description="维护模块负责人、路径、场景、上下游契约和联调命令。路径模式决定新提交能否自动归属到模块。"
+        actions={canEdit ? <button className="primary-button" onClick={() => setOpen(true)}><Plus size={16} />新建模块</button> : undefined}
       />
       {error && <div className="alert">{error}</div>}
       {message && <div className="success">{message}</div>}
 
       <section className="panel">
         <div className="panel-header"><div><h2>模块清单</h2><p>点击联调会按一跳依赖和共享场景生成最小组合。</p></div></div>
+        {!modules ? <Loading /> : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>模块</th><th>负责人</th><th>状态</th><th>契约</th><th>场景</th><th>操作</th></tr></thead>
+            <thead><tr><th>模块</th><th>负责人</th><th>状态</th><th>路径模式</th><th>契约</th><th>场景</th><th>操作</th></tr></thead>
             <tbody>
               {modules.map((module) => (
                 <tr key={module.id}>
                   <td><div className="module-name"><Boxes size={18} /><div><strong>{module.name}</strong><small>{module.moduleKey}</small></div></div></td>
                   <td>{module.ownerName ?? "未分配"}</td>
                   <td><StatusBadge value={module.status} /></td>
+                  <td><div className="tag-list">{module.paths.length === 0 ? <span className="tag warning">未配置路径</span> : module.paths.map((path) => <span key={path} className="tag">{path}</span>)}</div></td>
                   <td>
                     <div className="tag-list">
                       {module.provides.map((item) => <span key={item.key} className="tag provides">提供 {item.key}</span>)}
@@ -86,12 +95,13 @@ export default function ModulesPage() {
                     </div>
                   </td>
                   <td>{module.scenarios.join("、") || "—"}</td>
-                  <td><button className="small-button" onClick={() => void integrate(module)}><Play size={14} />联调</button></td>
+                  <td>{canRunIntegration ? <button className="small-button" onClick={() => void integrate(module)}><Play size={14} />联调</button> : <small>只读</small>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        )}
       </section>
 
       <section className="panel">

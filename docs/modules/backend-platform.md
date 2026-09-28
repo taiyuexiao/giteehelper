@@ -36,12 +36,12 @@
 ## 设计决策
 - SQLite 足以支撑单机 MVP；数据库文件位于 `data/giteehelper.db`。
 - Session 当前存于进程内存，重启后需重新登录；生产化前应迁移到持久化 Session。
-- 管理员密码由 `ADMIN_PASSWORD` 重置；未配置时使用本地开发默认值。
+- 管理员密码可由 `ADMIN_PASSWORD` 在启动时重置；未配置该变量时不再写入固定默认口令，而是生成随机密码并仅在控制台打印一次。
 - 所有用户、规则、模块和修复操作写审计，外部写操作单独记录。
 
 ## 验证
 - `npm run typecheck` 通过；
-- `npm test` 9 项通过；
+- `npm test` 25 项通过（`tests/` 下 9 个测试文件）；测试使用独立数据库 `data/test/giteehelper-test.db`，由 `pretest` 脚本先重置，因此不会触碰 `data/giteehelper.db`；
 - `/api/health`、`/api/login`、`/api/dashboard`、`/api/graph` 冒烟通过；
 - 未认证访问业务 API 返回 401；
 - 误导性联调记录和 `[旧导入]` 数据可通过管理员清理接口或 CLI 删除。
@@ -54,7 +54,7 @@
 - 不可破坏的行为：WHEN 业务请求并发 THEN 系统 SHALL CONTINUE TO 使用 WAL 和外键约束。
 - 根因：测试文件并行持有数据库写事务，SQLite 默认 busy timeout 不足。
 - 解决方式：设置 `PRAGMA busy_timeout = 5000`，并以 `--test-concurrency=1` 运行测试。
-- 验证方式：`npm test` 9 项稳定通过。
+- 验证方式：`npm test` 25 项稳定通过。
 
 ## 已知限制
 - 单项目、单组织、单进程 Session；

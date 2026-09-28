@@ -16,7 +16,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           react: ["react", "react-dom", "react-router-dom"],
-          graph: ["@xyflow/react"]
+          graph: ["@xyflow/react"],
+          three: ["three", "3d-force-graph"]
         }
       }
     }

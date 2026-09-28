@@ -18,6 +18,8 @@ type Settings = {
 type IntegrationStatus = {
   gitee: { configured: boolean; apiBase: string; repo: string | null; defaultBranch: string; webhookSecret: boolean };
   feishu: { configured: boolean; mode: string };
+  commits: { total: number; conflicts: number; authors: number; latest: string | null; last24h: number };
+  deliveries: Array<{ id: number; hookName: string | null; eventType: string | null; action: string | null; status: string; detail: string | null; commits: number; impacts: number; conflicts: number; createdAt: string }>;
   settings: Settings;
 };
 
@@ -158,17 +160,16 @@ export default function IntegrationsPage() {
     }
   }
 
-  if (!project || !status) return <Loading />;
-
   return (
     <>
       <PageHeader
         title="接入设置"
         description="所有接入参数都可以在这里配置；敏感值保存在服务器端，浏览器不回显原文。"
-        actions={<button className="primary-button" onClick={() => void save()} disabled={saving}><Save size={16} />{saving ? "保存中…" : "保存全部配置"}</button>}
+        actions={<button className="primary-button" onClick={() => void save()} disabled={saving || !project || !status}><Save size={16} />{saving ? "保存中…" : "保存全部配置"}</button>}
       />
       {error && <div className="alert">{error}</div>}
       {message && <div className="success">{message}</div>}
+      {!project || !status ? <Loading /> : <>
 
       <section className="settings-section">
         <div className="settings-section-header">
@@ -213,14 +214,60 @@ export default function IntegrationsPage() {
       <section className="settings-section">
         <div className="settings-section-header">
           <div className="settings-icon project"><CloudCog size={21} /></div>
-          <div><h2>项目配置</h2><p>项目名称、仓库和通知目标。</p></div>
+          <div><h2>项目配置</h2><p>项目名称与通知目标；仓库和分支跟随上面的 Gitee 连接配置。</p></div>
         </div>
         <div className="project-config-grid">
           <TextField label="项目名称" value={project.name} onChange={(value) => setProject({ ...project, name: value })} />
-          <TextField label="项目仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" help={<RepoHelp />} />
-          <TextField label="主分支" value={form.giteeDefaultBranch} onChange={(value) => setForm({ ...form, giteeDefaultBranch: value })} />
+          <div className="settings-field">
+            <span>项目仓库</span>
+            <input value={form.giteeRepo} readOnly aria-readonly="true" />
+            <small>与「目标仓库」是同一个值，修改请在上方 Gitee 连接中进行。</small>
+          </div>
+          <div className="settings-field">
+            <span>主分支</span>
+            <input value={form.giteeDefaultBranch} readOnly aria-readonly="true" />
+            <small>与「约定主分支」是同一个值。</small>
+          </div>
           <TextField label="飞书目标会话" value={project.feishuChatId ?? ""} onChange={(value) => setProject({ ...project, feishuChatId: value })} placeholder="群 ID 或会话标识" hint="当前 MVP 主要使用群机器人 Webhook。" />
         </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <div className="settings-icon runtime"><ServerCog size={21} /></div>
+          <div><h2>实时接收状态</h2><p>WebHook 是提交实时分析的入口；没有公网回调时可用「手动补齐」拉取最近提交。</p></div>
+          <span className={`badge ${status.deliveries.length > 0 ? "status-passed" : "status-clarification"}`}>
+            {status.deliveries.length > 0 ? `最近收到 ${status.deliveries[0].createdAt}` : "尚未收到任何事件"}
+          </span>
+        </div>
+        <div className="runtime-grid">
+          <div><span>提交总数</span><strong>{status.commits.total}</strong></div>
+          <div><span>24 小时新增</span><strong>{status.commits.last24h}</strong></div>
+          <div><span>冲突提交</span><strong>{status.commits.conflicts}</strong></div>
+          <div><span>提交人</span><strong>{status.commits.authors}</strong></div>
+        </div>
+        {status.deliveries.length === 0 ? (
+          <p className="confirm-copy">还没有收到 WebHook 投递。请在 Gitee 仓库的 WebHook 设置中把回调地址指向 <code>{`${window.location.origin}/api/webhooks/gitee`}</code>，并订阅 Push、Pull Request、Issue 和评论事件。</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>事件</th><th>状态</th><th>提交</th><th>影响</th><th>冲突</th><th>说明</th></tr></thead>
+              <tbody>
+                {status.deliveries.map((delivery) => (
+                  <tr key={delivery.id}>
+                    <td><small>{delivery.createdAt}</small></td>
+                    <td>{delivery.hookName ?? delivery.eventType ?? "—"}{delivery.action ? `/${delivery.action}` : ""}</td>
+                    <td><span className={`badge ${delivery.status === "processed" ? "status-passed" : delivery.status === "error" || delivery.status === "rejected" ? "status-blocked" : "status-running"}`}>{delivery.status}</span></td>
+                    <td>{delivery.commits}</td>
+                    <td>{delivery.impacts}</td>
+                    <td>{delivery.conflicts}</td>
+                    <td><small>{delivery.detail ?? "—"}</small></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="settings-section">
@@ -235,6 +282,7 @@ export default function IntegrationsPage() {
           <div><span>飞书模式</span><strong>{status.feishu.mode === "webhook" ? "真实发送" : "Dry-run"}</strong></div>
         </div>
       </section>
+      </>}
     </>
   );
 }
