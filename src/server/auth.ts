@@ -57,7 +57,7 @@ export function requireRole(...roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as Request & { user?: User }).user;
     if (!user || !roles.includes(user.role)) {
-      res.status(403).json({ error: "forbidden" });
+      res.status(403).json({ error: "当前角色没有该操作权限" });
       return;
     }
     next();
@@ -83,14 +83,29 @@ export function login(username: string, password: string): { token: string; user
 
 export function ensureAdminUser() {
   const existing = queryOne<{ id: number }>(`SELECT id FROM users WHERE username = ?`, [config.adminUsername]);
-  const password = config.adminPassword || "change-me-now";
-  const { hash, salt } = hashPassword(password);
   if (existing) {
-    execute(`UPDATE users SET password_hash = ?, password_salt = ?, role = 'admin', active = 1 WHERE id = ?`, [hash, salt, existing.id]);
+    // 未显式配置 ADMIN_PASSWORD 时绝不复位密码：旧版本会写入固定默认口令，等同于后门
+    if (config.adminPassword) {
+      const { hash, salt } = hashPassword(config.adminPassword);
+      execute(`UPDATE users SET password_hash = ?, password_salt = ?, role = 'admin', active = 1 WHERE id = ?`, [hash, salt, existing.id]);
+      return;
+    }
+    const current = queryOne<{ password_hash: string | null }>(`SELECT password_hash FROM users WHERE id = ?`, [existing.id]);
+    execute(`UPDATE users SET role = 'admin', active = 1 WHERE id = ?`, [existing.id]);
+    if (!current?.password_hash) {
+      const generated = crypto.randomBytes(12).toString("base64url");
+      const { hash, salt } = hashPassword(generated);
+      execute(`UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?`, [hash, salt, existing.id]);
+      console.warn(`[giteehelper] 管理员 ${config.adminUsername} 原本没有密码，已生成随机初始密码（仅本次显示）：${generated}`);
+    }
     return;
   }
+  const generated = config.adminPassword ? "" : crypto.randomBytes(12).toString("base64url");
+  const password = config.adminPassword || generated;
+  const { hash, salt } = hashPassword(password);
   execute(
     `INSERT INTO users (username, display_name, role, password_hash, password_salt) VALUES (?, ?, 'admin', ?, ?)`,
     [config.adminUsername, "系统管理员", hash, salt]
   );
+  if (generated) console.warn(`[giteehelper] 已创建管理员 ${config.adminUsername}，随机初始密码（仅本次显示）：${generated}`);
 }

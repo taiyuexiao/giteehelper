@@ -6,9 +6,20 @@ import { audit, execute, parseJson, queryAll, queryOne } from "../server/db.js";
 import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
+import { loadRuntimeSettings } from "../server/settings.js";
 import type { ContractRef } from "../shared/types.js";
 
 const [command = "help", ...args] = process.argv.slice(2);
+
+/**
+ * Web 控制台保存的配置存在 Secret Store 里，只读 .env 会让 `doctor`
+ * 把已配置的 Token/飞书报成 missing。这里先加载运行时配置再执行命令。
+ */
+try {
+  loadRuntimeSettings();
+} catch (error) {
+  console.warn(`[giteehelper] 运行时配置加载失败（将只使用 .env）：${error instanceof Error ? error.message : String(error)}`);
+}
 
 function configured(value: string) {
   return value ? "configured" : "missing";

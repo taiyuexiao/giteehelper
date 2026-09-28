@@ -24,15 +24,40 @@ const severityRank: Record<Severity, number> = {
 const categoryKeywords: Record<string, string[]> = {
   requirement: ["需求", "产品", "验收", "流程", "行为", "场景"],
   specification: ["规范", "标准", "约定", "必须", "不得", "统一", "命名"],
-  contract: ["接口", "api", "字段", "schema", "事件", "数据", "兼容", "版本"],
-  implementation: ["代码", "实现", "组件", "函数", "重构", "性能"],
+  contract: ["接口", "api", "字段", "schema", "事件", "数据", "兼容", "版本", "迁移", "升级"],
+  implementation: ["代码", "实现", "组件", "函数", "重构", "性能", "修复", "修正", "缺陷", "异常", "报错", "崩溃", "超时", "泄漏", "优化"],
   review: ["review", "评论", "审查", "合并", "建议", "改为"]
 };
 
+/**
+ * 通配符转正则。旧实现先替换 "**" 再替换 "*"，会把生成的 ".*" 再次拆成 ".[^/]*"，
+ * 导致 "src/server/**" 只能匹配一层目录，深层路径全部漏配。
+ */
 function wildcardMatch(value: string, pattern: string): boolean {
   const normalized = value.replace(/\\/g, "/");
-  const regex = new RegExp(`^${pattern.split("**").join(".*").split("*").join("[^/]*")}$`, "i");
-  return regex.test(normalized);
+  const source = pattern.replace(/\\/g, "/");
+  let regex = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "*") {
+      if (source[index + 1] === "*") {
+        if (source[index + 2] === "/") {
+          regex += "(?:.*/)?";
+          index += 2;
+        } else {
+          regex += ".*";
+          index += 1;
+        }
+      } else {
+        regex += "[^/]*";
+      }
+    } else if (char === "?") {
+      regex += "[^/]";
+    } else {
+      regex += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${regex}$`, "i").test(normalized);
 }
 
 function collectPaths(payload: Record<string, unknown>): string[] {
@@ -69,7 +94,9 @@ function ruleMatches(rule: Rule, event: EventInput, paths: string[], text: strin
   const branches = trigger.branches as string[] | undefined;
   const keywords = condition.keywords as string[] | undefined;
   const anyPath = condition.anyPath as string[] | undefined;
-  if (eventTypes?.length && !eventTypes.includes(event.eventType)) return false;
+  // 推到主干的提交等价于一次 push，否则面向 push 的规则永远无法作用在提交粒度上
+  const effectiveTypes = event.eventType === "commit" ? ["commit", "push"] : [event.eventType];
+  if (eventTypes?.length && !eventTypes.some((type) => effectiveTypes.includes(type))) return false;
   if (branches?.length && (!event.branch || !branches.includes(event.branch))) return false;
   if (keywords?.length && matchKeywords(text, keywords).length === 0) return false;
   if (anyPath?.length && !paths.some((path) => anyPath.some((pattern) => wildcardMatch(path, pattern)))) return false;
@@ -80,7 +107,16 @@ const genericTerms = new Set([
   "功能", "文档", "数据", "接口", "模块", "项目", "测试", "系统", "页面", "用户", "工作", "实现",
   "配置", "服务", "运行", "报告", "平台", "模型", "内容", "列表", "详情", "基础", "统一", "支持",
   "管理", "生成", "记录", "结果", "指标", "流程", "代码", "技术", "产品", "设计", "方案", "要求",
-  "环境", "性能", "安全", "权限", "账号", "登录", "工作台"
+  "环境", "性能", "安全", "权限", "账号", "登录", "工作台",
+  // 高频但无区分度的变更用语与工程词
+  "更新", "新增", "修改", "调整", "优化", "完善", "补充", "删除", "移除", "重构", "修复", "合并",
+  "提交", "变更", "改动", "版本", "发布", "上线", "说明", "备注", "问题", "情况", "相关", "进行",
+  "一个", "以及", "并且", "可以", "需要", "必须", "使用", "通过", "对于", "当前", "主要", "部分",
+  "api", "apis", "docs", "doc", "readme", "md", "mdx", "review", "reviews", "pr", "prs", "commit",
+  "commits", "merge", "merged", "revert", "feat", "feature", "fix", "fixes", "bugfix", "chore",
+  "refactor", "style", "build", "ci", "test", "tests", "spec", "wip", "draft", "update", "add",
+  "added", "remove", "removed", "change", "changed", "rfc", "adr", "tmp", "temp", "src", "main",
+  "master", "dev", "develop", "release", "hotfix", "true", "false", "null", "void"
 ]);
 
 export function isOperationalModule(module: Pick<Module, "moduleKey" | "name">) {
@@ -88,7 +124,47 @@ export function isOperationalModule(module: Pick<Module, "moduleKey" | "name">) 
     !module.moduleKey.trim().startsWith("[示例]") && !module.moduleKey.trim().startsWith("[旧导入]");
 }
 
-function moduleMatches(module: Module, paths: string[], text: string): { matched: boolean; evidence: Evidence[] } {
+const LATIN_TOKEN = /[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*/g;
+const CJK_RUN = /[\u3400-\u9fff]+/g;
+
+function isGenericTerm(term: string) {
+  if (genericTerms.has(term)) return true;
+  // 由通用词拼出的复合词同样没有区分度，例如 api-docs / docs_update
+  const parts = term.split(/[._-]/).filter(Boolean);
+  return parts.length > 1 && parts.every((part) => genericTerms.has(part));
+}
+
+/**
+ * 把变更文本切成候选语义单元：拉丁词按长度>=3 取整词，中日韩文本取 2~4 字 n-gram。
+ * 中文没有空格，只按整段取词会导致几乎无法与模块名匹配，因此必须切 n-gram。
+ */
+export function tokenize(text: string): string[] {
+  const lower = text.toLowerCase();
+  const tokens = new Set<string>();
+  for (const match of lower.matchAll(LATIN_TOKEN)) {
+    if (match[0].length >= 3) tokens.add(match[0]);
+  }
+  for (const match of lower.matchAll(CJK_RUN)) {
+    const run = match[0].slice(0, 80);
+    for (let size = 2; size <= 4; size += 1) {
+      for (let index = 0; index + size <= run.length; index += 1) tokens.add(run.slice(index, index + size));
+    }
+  }
+  return [...tokens].filter((term) => !isGenericTerm(term));
+}
+
+/** 语义匹配目标只取模块名、模块 Key 和共享场景；契约 Key 不再参与模糊匹配，避免 "api" 命中所有模块。 */
+function matchTargets(module: Module): string[] {
+  return [module.name, module.moduleKey, ...module.scenarios].map((value) => value.toLowerCase());
+}
+
+type ModuleMatch = { matched: boolean; evidence: Evidence[]; terms: string[] };
+
+function termMatchesModule(term: string, module: Module): boolean {
+  return matchTargets(module).some((target) => target.includes(term));
+}
+
+function moduleMatches(module: Module, paths: string[], terms: string[]): ModuleMatch {
   const evidence: Evidence[] = [];
   for (const path of paths) {
     if (module.paths.some((pattern) => wildcardMatch(path, pattern))) {
@@ -96,25 +172,19 @@ function moduleMatches(module: Module, paths: string[], text: string): { matched
     }
   }
 
-  const terms = [...text.toLowerCase().matchAll(/[\p{L}\p{N}_-]{2,}/gu)].map((match) => match[0]);
-  const strongTerms = [...new Set(terms.filter((term) => !genericTerms.has(term)))];
-  const exactTargets = [
-    module.name.toLowerCase(),
-    module.moduleKey.toLowerCase(),
-    ...module.scenarios.map((item) => item.toLowerCase()),
-    ...module.provides.map((item) => item.key.toLowerCase()),
-    ...module.requires.map((item) => item.key.toLowerCase())
-  ];
-  const exactTerms = strongTerms.filter((term) => exactTargets.some((target) => target.includes(term))).slice(0, 3);
-  for (const term of exactTerms) evidence.push({ type: "semantic", id: term, label: `精确关联 ${term}` });
+  const exactTerms = terms.filter((term) => termMatchesModule(term, module)).slice(0, 3);
+  for (const term of exactTerms) evidence.push({ type: "semantic", id: term, label: `命中 ${term}` });
 
+  // 仅靠描述词间接关联时要求至少两个强语义词同时出现，避免宽泛描述把无关模块拉进来
   const description = (module.description ?? "").toLowerCase();
-  const descriptionTerms = strongTerms.filter((term) => term.length >= 3 && description.includes(term));
-  if (exactTerms.length === 0 && descriptionTerms.length >= 2) {
-    for (const term of descriptionTerms.slice(0, 2)) evidence.push({ type: "semantic", id: term, label: `描述关联 ${term}` });
+  if (exactTerms.length === 0 && description) {
+    const descriptionTerms = terms.filter((term) => term.length >= 3 && description.includes(term)).slice(0, 2);
+    if (descriptionTerms.length >= 2) {
+      for (const term of descriptionTerms) evidence.push({ type: "semantic", id: term, label: `描述关联 ${term}` });
+    }
   }
 
-  return { matched: evidence.length > 0, evidence };
+  return { matched: evidence.length > 0, evidence, terms: exactTerms };
 }
 
 function classify(event: EventInput, paths: string[], text: string): { severity: Severity; category: string; nextAction: string } {
@@ -180,12 +250,25 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
   const nextAction = String(matchedRules[0]?.action.nextAction ?? base.nextAction);
   const results: Omit<Impact, "id" | "createdAt">[] = [];
 
+  const terms = tokenize(text);
+  const matches = new Map<number, ModuleMatch>();
+  const documentFrequency = new Map<string, number>();
   for (const module of modules) {
-    const match = moduleMatches(module, paths, text);
+    const match = moduleMatches(module, paths, terms);
+    matches.set(module.id, match);
+    for (const term of new Set(match.terms)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+  }
+  // 同时命中过多模块的语义词没有区分度（例如横跨全仓的通用目录名），直接丢弃以免整仓噪声
+  const ambiguityFloor = Math.max(3, Math.floor(modules.length / 2) + 1);
+  const isInformative = (term: string) => (documentFrequency.get(term) ?? 0) < ambiguityFloor;
+
+  for (const module of modules) {
+    const match = matches.get(module.id)!;
+    const evidence = match.evidence.filter((item) => item.type !== "semantic" || !item.id || isInformative(item.id));
     const sharedScenario = module.scenarios.some((scenario) => text.toLowerCase().includes(scenario.toLowerCase()));
-    if (!match.matched && !sharedScenario) continue;
-    if (sharedScenario && !match.evidence.some((item) => item.type === "scenario")) {
-      match.evidence.push({ type: "scenario", label: "共享业务场景" });
+    if (evidence.length === 0 && !sharedScenario) continue;
+    if (sharedScenario && !evidence.some((item) => item.type === "scenario")) {
+      evidence.push({ type: "scenario", label: "共享业务场景" });
     }
     results.push({
       eventId: 0,
@@ -195,7 +278,7 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
       category,
       reason: `${event.title} 影响模块「${module.name}」：${matchedRules[0]?.name ?? base.category}。`,
       evidence: [
-        ...match.evidence,
+        ...evidence,
         ...(event.url ? [{ type: "event", id: event.sourceId, label: "来源变化", url: event.url }] : []),
         ...matchedRules.map((rule) => ({ type: "rule", id: rule.ruleKey, label: rule.name }))
       ],

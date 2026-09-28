@@ -32,10 +32,47 @@ export function listModules(projectId = 1): Module[] {
   ).map(rowToModule);
 }
 
-function compatible(a: string, b: string): boolean {
-  if (a === "*" || b === "*") return true;
-  const clean = (value: string) => value.replace(/^[\^~>=<\s]+/, "");
-  return clean(a) === clean(b) || a.includes(clean(b)) || b.includes(clean(a));
+type Version = [number, number, number];
+
+function parseVersion(value: string): Version | null {
+  const match = value.trim().replace(/^[\^~>=<\s]+/, "").match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)];
+}
+
+function compareVersions(left: Version, right: Version): number {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+/**
+ * 契约版本兼容判断。旧实现只做字符串包含，`^1.0` 与 `1.1` 会被判为不兼容，
+ * 也无法支撑真实的契约校验。
+ */
+export function versionsCompatible(provided: string, required: string): boolean {
+  const source = provided.trim();
+  const range = required.trim();
+  if (!source || !range) return false;
+  if (source === "*" || range === "*") return true;
+  const target = parseVersion(range);
+  const actual = parseVersion(source);
+  if (!target || !actual) {
+    const clean = (value: string) => value.replace(/^[\^~>=<\s]+/, "");
+    return clean(source) === clean(range);
+  }
+  if (range.startsWith("^")) {
+    if (target[0] > 0) return actual[0] === target[0] && compareVersions(actual, target) >= 0;
+    if (target[1] > 0) return actual[0] === 0 && actual[1] === target[1] && compareVersions(actual, target) >= 0;
+    return compareVersions(actual, target) === 0;
+  }
+  if (range.startsWith("~")) return actual[0] === target[0] && actual[1] === target[1] && compareVersions(actual, target) >= 0;
+  if (range.startsWith(">=")) return compareVersions(actual, target) >= 0;
+  if (range.startsWith("<=")) return compareVersions(actual, target) <= 0;
+  if (range.startsWith(">")) return compareVersions(actual, target) > 0;
+  if (range.startsWith("<")) return compareVersions(actual, target) < 0;
+  return compareVersions(actual, target) === 0;
 }
 
 export async function createIntegrationRun(moduleKey: string, triggerEventId: number | null = null, projectId = 1): Promise<IntegrationRun> {
@@ -50,7 +87,7 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
   }];
 
   for (const requirement of target.requires) {
-    const provider = modules.find((module) => module.moduleKey !== moduleKey && module.provides.some((item) => item.key === requirement.key && compatible(item.version, requirement.version)));
+    const provider = modules.find((module) => module.moduleKey !== moduleKey && module.provides.some((item) => item.key === requirement.key && versionsCompatible(item.version, requirement.version)));
     const isReal = Boolean(provider && provider.status !== "not_started");
     combination.push({
       moduleKey: provider?.moduleKey ?? `${requirement.key}:stub`,
@@ -73,6 +110,16 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
     }
   }
 
+  const contracts = queryAll<{ contractKey: string; version: string }>(
+    `SELECT contract_key AS contractKey, version FROM contracts WHERE project_id = ?`,
+    [projectId]
+  );
+  const missingContracts = target.requires
+    .filter((requirement) => requirement.mode !== "optional")
+    .filter((requirement) => !contracts.some((contract) => contract.contractKey === requirement.key && versionsCompatible(contract.version, requirement.version)))
+    .map((requirement) => requirement.key);
+  const contractVerified = missingContracts.length === 0;
+
   let status: IntegrationRun["status"] = "blocked";
   let testOutput = "";
   let executionVerified = false;
@@ -91,7 +138,8 @@ export async function createIntegrationRun(moduleKey: string, triggerEventId: nu
   const sliceIntegrated = executionVerified && combination.some((item) => item.mode === "real" && item.moduleKey !== target.moduleKey);
   const result = {
     scenarios: sharedScenarios,
-    contractVerified: true,
+    contractVerified,
+    missingContracts,
     executionVerified,
     sliceIntegrated,
     command: shouldExecuteTests ? target.testCommand : null,
