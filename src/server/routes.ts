@@ -6,7 +6,7 @@ import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 import { createSession, currentUser, destroySession, hashPassword, login, requireAuth, requireRole } from "./auth.js";
 import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.js";
 import { createIntegrationRun, getRun } from "./integration.js";
-import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, listWebhookDeliveries, recordWebhookDelivery } from "./commits.js";
+import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, listWebhookDeliveries, reanalyzeAll, recordWebhookDelivery } from "./commits.js";
 import { buildRepoGraph } from "./repograph.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -388,6 +388,10 @@ router.delete("/users/:id", requireAuth, requireAdmin, (req, res) => {
 
 router.post("/admin/cleanup-misleading-data", requireAuth, requireAdmin, (_req, res) => {
   res.json(cleanupMisleadingData());
+});
+
+router.post("/admin/reanalyze", requireAuth, requireAdmin, (_req, res) => {
+  res.json(reanalyzeAll());
 });
 
 router.get("/audit", requireAuth, requireAdmin, (req, res) => {

@@ -116,7 +116,13 @@ const genericTerms = new Set([
   "commits", "merge", "merged", "revert", "feat", "feature", "fix", "fixes", "bugfix", "chore",
   "refactor", "style", "build", "ci", "test", "tests", "spec", "wip", "draft", "update", "add",
   "added", "remove", "removed", "change", "changed", "rfc", "adr", "tmp", "temp", "src", "main",
-  "master", "dev", "develop", "release", "hotfix", "true", "false", "null", "void"
+  "master", "dev", "develop", "release", "hotfix", "true", "false", "null", "void",
+  "run", "runs", "build", "builds", "deploy", "deploys", "page", "pages", "list", "lists",
+  "item", "items", "task", "tasks", "work", "works", "file", "files", "name", "names",
+  "value", "values", "start", "stop", "open", "close", "check", "checks", "enable",
+  "disable", "allow", "avoid", "handle", "ensure", "return", "include", "support", "new",
+  "old", "make", "move", "rename", "clean", "improve", "bump", "upgrade", "downgrade",
+  "branch", "code", "doc", "index", "base", "core", "common", "utils", "util"
 ]);
 
 export function isOperationalModule(module: Pick<Module, "moduleKey" | "name">) {
@@ -158,33 +164,54 @@ function matchTargets(module: Module): string[] {
   return [module.name, module.moduleKey, ...module.scenarios].map((value) => value.toLowerCase());
 }
 
-type ModuleMatch = { matched: boolean; evidence: Evidence[]; terms: string[] };
+type ModuleMatch = { matched: boolean; evidence: Evidence[]; terms: string[]; specific: boolean; areas: string[] };
 
+/** 被超过这个数量的模块共用的路径模式/场景只能说明"某个区域变了"，无法定位到具体工作项 */
+const SHARED_PATTERN_LIMIT = 2;
+/** 语义词的文档频率上限（占模块总数的比例），超过即视为无区分度 */
+const SEMANTIC_DF_RATIO = 0.05;
+
+const SHORT_CJK_TERM = /^[\u3400-\u9fff]{2}$/;
+
+/**
+ * 2 字中文词太容易成为长模块名的子串（"部署" ⊂ "底座 · 目标环境重复部署与回退演练"），
+ * 因此只允许与模块名/Key/场景完全相等；3 字及以上才允许子串匹配。
+ */
 function termMatchesModule(term: string, module: Module): boolean {
-  return matchTargets(module).some((target) => target.includes(term));
+  const targets = matchTargets(module);
+  return SHORT_CJK_TERM.test(term)
+    ? targets.some((target) => target === term)
+    : targets.some((target) => target.includes(term));
 }
 
-function moduleMatches(module: Module, paths: string[], terms: string[]): ModuleMatch {
+function moduleMatches(module: Module, paths: string[], terms: string[], sharedPatterns: Set<string>): ModuleMatch {
   const evidence: Evidence[] = [];
+  const areas: string[] = [];
+  let specific = false;
+
   for (const path of paths) {
-    if (module.paths.some((pattern) => wildcardMatch(path, pattern))) {
+    const matched = module.paths.filter((pattern) => wildcardMatch(path, pattern));
+    if (matched.length === 0) continue;
+    // 同一个文件可能同时命中"本模块专有模式"和"区域共用模式"，专有模式优先
+    const own = matched.filter((pattern) => !sharedPatterns.has(pattern));
+    if (own.length > 0) {
+      specific = true;
       evidence.push({ type: "path", id: path, label: `变更路径 ${path}` });
+    } else {
+      areas.push(matched[0]);
+      evidence.push({ type: "area", id: matched[0], label: `区域 ${matched[0]}` });
     }
   }
 
   const exactTerms = terms.filter((term) => termMatchesModule(term, module)).slice(0, 3);
+  if (exactTerms.length > 0) specific = true;
   for (const term of exactTerms) evidence.push({ type: "semantic", id: term, label: `命中 ${term}` });
 
-  // 仅靠描述词间接关联时要求至少两个强语义词同时出现，避免宽泛描述把无关模块拉进来
-  const description = (module.description ?? "").toLowerCase();
-  if (exactTerms.length === 0 && description) {
-    const descriptionTerms = terms.filter((term) => term.length >= 3 && description.includes(term)).slice(0, 2);
-    if (descriptionTerms.length >= 2) {
-      for (const term of descriptionTerms) evidence.push({ type: "semantic", id: term, label: `描述关联 ${term}` });
-    }
-  }
+  // 注意：这里刻意不使用模块 description 做匹配。
+  // 描述可能是导入的整段中文工作项正文，任何中文提交都能在里面凑出两个"强语义词"，
+  // 从而把大量无关模块判成精确命中。需要按描述匹配时应改为配置路径模式或场景。
 
-  return { matched: evidence.length > 0, evidence, terms: exactTerms };
+  return { matched: evidence.length > 0, evidence, terms: exactTerms, specific, areas };
 }
 
 function classify(event: EventInput, paths: string[], text: string): { severity: Severity; category: string; nextAction: string } {
@@ -243,6 +270,14 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
     action: parseJson<Record<string, unknown>>(row.actionJson, {})
   }));
 
+  const patternOwners = new Map<string, number>();
+  for (const module of modules) {
+    for (const pattern of new Set(module.paths)) patternOwners.set(pattern, (patternOwners.get(pattern) ?? 0) + 1);
+  }
+  const sharedPatterns = new Set(
+    [...patternOwners.entries()].filter(([, count]) => count > SHARED_PATTERN_LIMIT).map(([pattern]) => pattern)
+  );
+
   const matchedRules = rules.filter((rule) => ruleMatches(rule, event, paths, text));
   const ruleSeverity = matchedRules.map((rule) => rule.severity).sort((a, b) => severityRank[b] - severityRank[a])[0];
   const severity = ruleSeverity && severityRank[ruleSeverity] > severityRank[base.severity] ? ruleSeverity : base.severity;
@@ -254,13 +289,15 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
   const matches = new Map<number, ModuleMatch>();
   const documentFrequency = new Map<string, number>();
   for (const module of modules) {
-    const match = moduleMatches(module, paths, terms);
+    const match = moduleMatches(module, paths, terms, sharedPatterns);
     matches.set(module.id, match);
     for (const term of new Set(match.terms)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
   }
-  // 同时命中过多模块的语义词没有区分度（例如横跨全仓的通用目录名），直接丢弃以免整仓噪声
-  const ambiguityFloor = Math.max(3, Math.floor(modules.length / 2) + 1);
-  const isInformative = (term: string) => (documentFrequency.get(term) ?? 0) < ambiguityFloor;
+  // 命中过多模块的语义词没有区分度。阈值按模块总数取相对值：模块越多，能被接受的命中面越窄
+  const ambiguityFloor = Math.max(2, Math.ceil(modules.length * SEMANTIC_DF_RATIO));
+  const isInformative = (term: string) => (documentFrequency.get(term) ?? 0) <= ambiguityFloor;
+
+  const areaBuckets = new Map<string, { count: number; owners: Set<string> }>();
 
   for (const module of modules) {
     const match = matches.get(module.id)!;
@@ -269,6 +306,16 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
     if (evidence.length === 0 && !sharedScenario) continue;
     if (sharedScenario && !evidence.some((item) => item.type === "scenario")) {
       evidence.push({ type: "scenario", label: "共享业务场景" });
+    }
+    // 只有区域级共用模式命中时，收敛成一条区域影响：否则一条 docs 提交会给区域内几十个工作项的负责人同时发通知
+    const onlyArea = !match.specific && evidence.every((item) => item.type === "area" || item.type === "scenario" || item.type === "event" || item.type === "rule");
+    if (onlyArea) {
+      const area = match.areas[0] ?? "未标注区域";
+      const bucket = areaBuckets.get(area) ?? { count: 0, owners: new Set<string>() };
+      bucket.count += 1;
+      if (module.ownerName) bucket.owners.add(module.ownerName);
+      areaBuckets.set(area, bucket);
+      continue;
     }
     results.push({
       eventId: 0,
@@ -283,6 +330,23 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
         ...matchedRules.map((rule) => ({ type: "rule", id: rule.ruleKey, label: rule.name }))
       ],
       nextAction,
+      status: "open"
+    });
+  }
+
+  for (const [area, bucket] of areaBuckets) {
+    results.push({
+      eventId: 0,
+      moduleId: null,
+      userId: null,
+      severity,
+      category,
+      reason: `${event.title} 落在区域「${area}」，该区域下有 ${bucket.count} 个工作项共享这条路径模式。`,
+      evidence: [
+        { type: "area", id: area, label: `区域 ${area}` },
+        ...(event.url ? [{ type: "event", id: event.sourceId, label: "来源变化", url: event.url }] : [])
+      ],
+      nextAction: bucket.count > 1 ? `确认区域内具体工作项（涉及 ${bucket.count} 项）` : "确认区域内具体工作项",
       status: "open"
     });
   }

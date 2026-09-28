@@ -1,5 +1,5 @@
 import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
-import { persistEventAndImpacts, type EventInput } from "./impact.js";
+import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.js";
 import type { Impact, Severity } from "../shared/types.js";
 
 /** 需要下游动作的严重度视为“冲突”，会触发飞书通知 */
@@ -301,4 +301,91 @@ export function listWebhookDeliveries(limit = 20) {
      FROM webhook_deliveries ORDER BY id DESC LIMIT ?`,
     [limit]
   );
+}
+
+function countImpacts(projectId = 1) {
+  return queryOne<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM impacts i JOIN change_events e ON e.id = i.event_id WHERE e.project_id = ?`,
+    [projectId]
+  )?.count ?? 0;
+}
+
+/**
+ * 按当前匹配规则重算历史影响。
+ * 匹配规则收紧后，旧数据里会留下大量按老规则生成的噪声影响（例如一条文档提交命中几十个工作项），
+ * 这个操作把提交与非提交事件都按新规则重新分析一遍。提交行会先删除再按原始字段重新入库，
+ * 因此 analysis_json、severity、conflict 也会一并刷新。
+ */
+export function reanalyzeAll(projectId = 1) {
+  const before = countImpacts(projectId);
+
+  const commits = queryAll<{
+    id: number; sha: string; message: string; author_login: string | null; author_name: string | null;
+    author_email: string | null; committed_at: string | null; branch: string | null; url: string | null;
+    files_json: string; additions: number; deletions: number; pull_number: number | null;
+    pull_title: string | null; event_id: number | null;
+  }>(
+    `SELECT id, sha, message, author_login, author_name, author_email, committed_at, branch, url,
+            files_json, additions, deletions, pull_number, pull_title, event_id
+     FROM commits WHERE project_id = ?`,
+    [projectId]
+  );
+
+  for (const row of commits) {
+    if (row.event_id) execute(`DELETE FROM change_events WHERE id = ?`, [row.event_id]);
+    execute(`DELETE FROM commits WHERE id = ?`, [row.id]);
+    ingestCommit({
+      sha: row.sha,
+      message: row.message,
+      authorLogin: row.author_login,
+      authorName: row.author_name,
+      authorEmail: row.author_email,
+      committedAt: row.committed_at,
+      branch: row.branch,
+      url: row.url,
+      files: parseJson<CommitFile[]>(row.files_json, []),
+      additions: row.additions,
+      deletions: row.deletions,
+      pullNumber: row.pull_number,
+      pullTitle: row.pull_title
+    }, projectId);
+  }
+
+  const events = queryAll<{
+    id: number; source: string; source_id: string; event_type: string; action: string; title: string;
+    author: string; branch: string | null; url: string | null; payload_json: string;
+  }>(
+    `SELECT id, source, source_id, event_type, action, title, author, branch, url, payload_json
+     FROM change_events WHERE project_id = ? AND event_type != 'commit'`,
+    [projectId]
+  );
+
+  for (const event of events) {
+    execute(`DELETE FROM impacts WHERE event_id = ?`, [event.id]);
+    const analysis = analyzeEvent({
+      source: event.source,
+      sourceId: event.source_id,
+      eventType: event.event_type,
+      action: event.action,
+      title: event.title,
+      author: event.author,
+      branch: event.branch ?? undefined,
+      url: event.url ?? undefined,
+      payload: parseJson<Record<string, unknown>>(event.payload_json, {})
+    }, projectId);
+    for (const item of analysis.impacts) {
+      execute(
+        `INSERT INTO impacts (event_id, module_id, user_id, severity, category, reason, evidence_json, next_action, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [event.id, item.moduleId, item.userId, item.severity, item.category, item.reason,
+          JSON.stringify(item.evidence), item.nextAction, item.status]
+      );
+    }
+  }
+
+  const after = countImpacts(projectId);
+  audit(null, "system", "reanalyze_impacts", "project", projectId, {
+    commits: commits.length, events: events.length, impactsBefore: before, impactsAfter: after
+  });
+  return { commits: commits.length, events: events.length, impactsBefore: before, impactsAfter: after };
 }

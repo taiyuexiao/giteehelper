@@ -32,7 +32,8 @@ giteehelper repair approve <repair-id>
 - `manifest validate`：校验 key、重复模块、负责人、路径和契约注册；
 - `contract test`：契约未注册会失败，provider 未提交会列为 `stubbed`；
 - `repair apply` 使用 `git apply --check` 后才应用；
-- `repair approve` 要求已 test，且只授权修复分支/PR。
+- `repair approve` 要求已 test，且只授权修复分支/PR；
+- `reanalyze`：按当前匹配规则重算全部历史影响（提交会按原始字段重新入库，`analysis_json`/`severity`/`conflict` 一并刷新），用于匹配规则收紧后清理旧噪声；也可通过 `POST /api/admin/reanalyze` 触发。
 
 ## 验证
 - `npm run build` 通过；
@@ -65,3 +66,4 @@ giteehelper repair approve <repair-id>
 | 2026-09-27 | 修复 Docker 生产模式端口监听地址 | BUG-001 |
 | 2026-09-28 | 测试改用独立数据库，新增 14 个用例（共 25 个） | 测试隔离 |
 | 2026-09-28 | `doctor` 等命令启动时加载 Secret Store，修复已配置项被报成 missing | 诊断准确性 |
+| 2026-09-28 | 新增 `reanalyze` 命令与 `/api/admin/reanalyze`，按新规则重算历史影响 | 匹配精度 |
