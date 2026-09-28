@@ -46,10 +46,15 @@ export function normalizeGiteeEvent(payload: Record<string, unknown>, eventTypeH
   const pull = (payload.pull_request ?? payload) as Record<string, unknown>;
   const repository = (payload.repository ?? payload.project ?? {}) as Record<string, unknown>;
   const note = payload.note as Record<string, unknown> | undefined;
+  const issue = payload.issue as Record<string, unknown> | undefined;
+  const eventType = hookName.includes("merge_request") ? "pull_request"
+    : hookName.includes("note") ? "note"
+      : hookName.includes("issue") ? "issue"
+        : "push";
   const eventInput: EventInput = {
     source: "gitee",
-    sourceId: String(payload.hook_id ?? pull.id ?? payload.after ?? crypto.randomUUID()),
-    eventType: hookName.includes("merge_request") ? "pull_request" : hookName.includes("note") ? "note" : hookName.includes("issue") ? "issue" : "push",
+    sourceId: eventSourceId(eventType, payload, pull, note, issue),
+    eventType,
     action,
     title: String(pull.title ?? payload.title ?? note?.body ?? eventTypeHeader ?? "Gitee 变化"),
     author: String((payload.sender as Record<string, unknown> | undefined)?.login ?? (pull.author as Record<string, unknown> | undefined)?.login ?? payload.user_name ?? "unknown"),
@@ -58,6 +63,33 @@ export function normalizeGiteeEvent(payload: Record<string, unknown>, eventTypeH
     payload
   };
   return eventInput;
+}
+
+/**
+ * 事件唯一标识必须来自"被改动的实体"，不能用 hook_id：
+ * hook_id 对同一个 Hook 是常量，而 change_events 对 (source, source_id, event_type, action)
+ * 有唯一约束，用 hook_id 会导致同一类事件的第二条起被当成重复投递静默丢弃。
+ * PR 额外带上 head sha，这样同一 PR 的新提交能形成新事件而不是被去重。
+ */
+function eventSourceId(
+  eventType: string,
+  payload: Record<string, unknown>,
+  pull: Record<string, unknown>,
+  note?: Record<string, unknown>,
+  issue?: Record<string, unknown>
+): string {
+  if (eventType === "note" && note?.id !== undefined) return `note-${String(note.id)}`;
+  if (eventType === "issue" && issue?.id !== undefined) return `issue-${String(issue.id)}`;
+  if (eventType === "pull_request") {
+    const number = pull.id ?? pull.number;
+    const head = (pull.head ?? {}) as Record<string, unknown>;
+    const headSha = typeof head.sha === "string" ? head.sha.slice(0, 12) : undefined;
+    if (number !== undefined) return headSha ? `pull-${String(number)}@${headSha}` : `pull-${String(number)}`;
+  }
+  const pushId = payload.after ?? pull.id ?? (payload.head_commit as Record<string, unknown> | undefined)?.id;
+  if (pushId !== undefined) return String(pushId);
+  if (payload.hook_id !== undefined) return `hook-${String(payload.hook_id)}-${crypto.randomUUID().slice(0, 8)}`;
+  return crypto.randomUUID();
 }
 
 export async function listPullRequests(repo: string, state: "open" | "closed" | "all" = "all") {

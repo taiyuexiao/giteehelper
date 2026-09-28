@@ -64,6 +64,7 @@
 | 2026-09-28 | 修复 | 架构关系图在缺少 `module-*` 顶层模块时回退展示全部模块，不再白屏 | Web 控制台 |
 | 2026-09-28 | 修复 | CLI `doctor` 先加载 Secret Store，不再把 Web 端已配置的飞书报成 missing | CLI 与打包 |
 | 2026-09-28 | 安全 | `/runs`、`/modules/:id/integrate`、`/repairs/:id/test` 补齐角色校验，observer 只读；403 文案中文化 | 后端平台、Web 控制台 |
+| 2026-09-28 | 修复 | 事件唯一标识不再用 hook_id（常量会导致同类事件从第二条起被静默去重），改用 PR id+head sha / note id / issue id / push after | Gitee/飞书接入 |
 
 ## 关键问题与解决
 - 现有工具分散：Gitee 可把原始事件推到飞书，AI 审查工具可修 PR，影响分析工具可算风险，但未发现完整覆盖本需求闭环的单体产品。
