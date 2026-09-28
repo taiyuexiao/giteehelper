@@ -31,17 +31,24 @@ export function ownerPalette(owner: string | null | undefined): OwnerPalette {
   const hue = OWNER_HUES[hashKey(key) % OWNER_HUES.length];
   return {
     hue,
-    fill: `hsl(${hue} 42% 87%)`,
-    fillSoft: `hsl(${hue} 46% 93%)`,
-    stroke: `hsl(${hue} 34% 46%)`,
+    fill: `hsl(${hue} 46% 78%)`,
+    fillSoft: `hsl(${hue} 52% 92%)`,
+    stroke: `hsl(${hue} 40% 42%)`,
     text: `hsl(${hue} 38% 30%)`
   };
 }
 
-/** 3D 场景使用的十六进制数值，three.js 只接受数字色值 */
-export function ownerHex(owner: string | null | undefined, lightness = 74): number {
-  const { hue } = ownerPalette(owner);
-  return hslToHex(hue, 0.4, lightness / 100);
+/**
+ * 3D 场景必须用数字色值。
+ * three.js 的 Color 不解析 CSS 的空格分隔 hsl 语法（"hsl(188 46% 78%)"），
+ * 解析失败会静默退化成纯白——这正是节点全都显示成白圆的原因。
+ */
+export function ownerFillHex(owner: string | null | undefined): number {
+  return hslToHex(ownerPalette(owner).hue, 0.46, 0.78);
+}
+
+export function ownerStrokeHex(owner: string | null | undefined): number {
+  return hslToHex(ownerPalette(owner).hue, 0.4, 0.42);
 }
 
 export function hslToHex(hue: number, saturation: number, lightness: number): number {

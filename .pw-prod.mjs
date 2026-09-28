@@ -1,0 +1,26 @@
+import { chromium } from "/Users/shipeilin/projects/mine/giteehelper/node_modules/playwright/index.mjs";
+const BASE = "http://150.158.164.254/giteehelper";
+const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
+const page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, deviceScaleFactor: 2 });
+const errors = [];
+page.on("pageerror", e => errors.push(e.message));
+await page.goto(BASE + "/", { waitUntil: "networkidle" });
+await page.fill('input[autocomplete="username"]', process.env.PU);
+await page.fill('input[autocomplete="current-password"]', process.env.PW);
+await page.click(".login-form button");
+await page.waitForSelector(".sidebar");
+await page.goto(BASE + "/repo", { waitUntil: "networkidle" });
+await page.waitForSelector(".repo-canvas canvas");
+await page.waitForTimeout(6000);
+await page.screenshot({ path: "/tmp/prod-repo.png" });
+// 侧栏与画布的高度/位置，用于定位"左侧空白"
+const box = async (sel) => { const b = await page.locator(sel).first().boundingBox().catch(() => null); return b ? `x=${Math.round(b.x)} y=${Math.round(b.y)} w=${Math.round(b.width)} h=${Math.round(b.height)}` : "无"; };
+console.log("画布容器 :", await box(".repo-canvas-wrap"));
+console.log("侧栏     :", await box(".repo-sidebar"));
+console.log("负责人面板:", await box(".repo-sidebar .panel:nth-child(1)"));
+console.log("接入状态 :", await box(".repo-sidebar .panel:nth-child(2)"));
+console.log("图例面板 :", await box(".repo-sidebar .panel:nth-child(3)"));
+console.log("runtime-grid:", await box(".runtime-grid"));
+console.log("负责人 chip 数:", await page.locator(".owner-chip").count());
+console.log("错误:", errors.length ? errors.slice(0,3).join(" || ") : "无");
+await browser.close();

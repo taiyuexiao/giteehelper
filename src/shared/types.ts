@@ -140,7 +140,7 @@ export interface DashboardData {
 export interface GraphNode {
   id: string;
   label: string;
-  type: "project" | "module" | "contract" | "scenario" | "user" | "event" | "author" | "commit" | "pull";
+  type: "project" | "module" | "contract" | "scenario" | "user" | "event" | "author" | "commit" | "pull" | "owner";
   meta?: Record<string, unknown>;
 }
 

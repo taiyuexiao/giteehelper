@@ -32,7 +32,8 @@ const typeLabels: Record<EntityType, string> = {
   event: "事件",
   author: "提交人",
   commit: "提交",
-  pull: "PR"
+  pull: "PR",
+  owner: "负责人"
 };
 
 const typeIcons: Record<EntityType, typeof Boxes> = {
@@ -44,7 +45,8 @@ const typeIcons: Record<EntityType, typeof Boxes> = {
   event: GitPullRequest,
   author: UserRound,
   commit: GitCommitHorizontal,
-  pull: GitPullRequest
+  pull: GitPullRequest,
+  owner: UserRound
 };
 
 const typeColors: Record<EntityType, string> = {
@@ -56,7 +58,8 @@ const typeColors: Record<EntityType, string> = {
   event: "#b8443c",
   author: "#6f8b96",
   commit: "#39809c",
-  pull: "#7d6bb0"
+  pull: "#7d6bb0",
+  owner: "#4a8593"
 };
 
 function isLegacy(node: GraphNode) {
@@ -81,8 +84,8 @@ function visibleGraphNodes(data: GraphData, ids: Set<string>): GraphNode[] {
 
 function toFlowNodes(data: GraphData, ids: Set<string>, selectedId: string | null): EntityFlowNode[] {
   const visible = visibleGraphNodes(data, ids);
-  const counters: Record<EntityType, number> = { project: 0, module: 0, contract: 0, scenario: 0, user: 0, event: 0, author: 0, commit: 0, pull: 0 };
-  const x: Record<EntityType, number> = { user: 18, project: 330, module: 330, contract: 690, scenario: 1035, event: 1375, author: 18, commit: 1035, pull: 690 };
+  const counters: Record<EntityType, number> = { project: 0, module: 0, contract: 0, scenario: 0, user: 0, event: 0, author: 0, commit: 0, pull: 0, owner: 0 };
+  const x: Record<EntityType, number> = { user: 18, project: 330, module: 330, contract: 690, scenario: 1035, event: 1375, author: 18, commit: 1035, pull: 690, owner: 18 };
   return visible.map((node) => {
     const index = counters[node.type]++;
     const y = node.type === "project" ? -60 : 78 + index * 112;

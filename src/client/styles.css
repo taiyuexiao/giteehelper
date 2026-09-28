@@ -155,7 +155,8 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 .yaml-editor { min-height: 430px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; background: #17262d; color: #dce8e8; border-color: #17262d; }
 .code-block { margin: 0; min-height: 80px; max-height: 360px; overflow: auto; padding: 15px 18px; color: #dce8e8; background: #17262d; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 
-.legend { padding: 16px 18px; display: grid; gap: 10px; }
+.legend { padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.repo-sidebar .legend-item { font-size: 10px; }
 .legend-item { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; }
 .legend-item i { width: 11px; height: 11px; border-radius: 50%; background: #9fb3bd; flex: 0 0 auto; }
 .legend-project i { background: #2f6f7a; }
@@ -458,17 +459,20 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 .help-warning code { color: #7b5428; background: #fff5e8; border-color: #f0dcc2; }
 
 /* ===== 仓库全景（3D） ===== */
-.repo-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.repo-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 11px; margin-bottom: 13px; }
+.repo-metrics .metric { padding: 13px 15px; }
+.repo-metrics .metric strong { margin-top: 5px; font-size: 23px; }
+.repo-metrics .metric svg { right: 14px; top: 14px; }
 .repo-hint {
-  margin-bottom: 15px; padding: 11px 14px; display: flex; gap: 9px; align-items: flex-start;
+  margin-bottom: 13px; padding: 11px 14px; display: flex; gap: 9px; align-items: flex-start;
   color: #7b5428; background: #fff6e9; border: 1px solid #f0dcc2; border-radius: 6px; font-size: 11px; line-height: 1.6;
 }
 .repo-hint svg { flex: 0 0 auto; margin-top: 1px; }
 
-.repo-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 17px; align-items: start; }
+.repo-layout { display: grid; grid-template-columns: minmax(0, 1fr) 322px; gap: 16px; align-items: start; }
 .repo-canvas-wrap {
-  position: relative; height: calc(100vh - 260px); min-height: 560px;
-  background: #f2f6f7; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  position: relative; height: calc(100vh - 356px); min-height: 480px;
+  background: #fbfcfc; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
 }
 .repo-canvas { width: 100%; height: 100%; }
 .repo-canvas canvas { display: block; touch-action: none; }
@@ -491,21 +495,45 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 }
 .repo-range input { width: 110px; min-height: 0; padding: 0; border: 0; background: transparent; }
 
-.repo-sidebar { display: grid; gap: 14px; }
-.owner-legend { padding: 14px 16px; display: grid; gap: 8px; }
+/* 侧栏与画布等高并内部滚动，避免画布结束后左侧留下大片空白 */
+.repo-sidebar {
+  display: grid; gap: 12px; align-content: start;
+  max-height: calc(100vh - 356px); min-height: 480px; overflow-y: auto; padding-right: 3px;
+  scrollbar-width: thin;
+}
+.repo-sidebar::-webkit-scrollbar { width: 6px; }
+.repo-sidebar::-webkit-scrollbar-thumb { background: #cfdadd; border-radius: 3px; }
+.repo-sidebar .panel { margin-bottom: 0; }
+.repo-sidebar .panel-header { min-height: 0; padding: 12px 14px; gap: 10px; }
+.repo-sidebar .panel-header h2 { font-size: 13px; margin-bottom: 3px; }
+.repo-sidebar .panel-header p { font-size: 10px; line-height: 1.5; }
+
+.owner-legend { padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .owner-chip {
-  display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 9px; align-items: center;
-  min-height: 34px; padding: 0 11px; border: 1px solid transparent; border-radius: 999px;
-  font-size: 11px; font-weight: 750; text-align: left; cursor: pointer; opacity: .5; transition: opacity .15s ease;
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 7px; align-items: center;
+  min-height: 30px; padding: 0 9px; border: 1px solid transparent; border-radius: 6px;
+  font-size: 10.5px; font-weight: 750; text-align: left; cursor: pointer; opacity: .55; transition: opacity .15s ease;
 }
 .owner-chip.active { opacity: 1; }
-.owner-chip i { width: 9px; height: 9px; border-radius: 50%; }
+.owner-chip:hover { opacity: 1; }
+.owner-chip i { width: 8px; height: 8px; border-radius: 50%; }
 .owner-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.owner-chip strong { font-size: 10px; opacity: .75; }
+.owner-chip strong { font-size: 9.5px; opacity: .7; }
 .owner-clear {
-  margin-top: 2px; padding: 7px 10px; border: 1px dashed var(--line); border-radius: 6px;
+  grid-column: 1 / -1; margin-top: 2px; padding: 6px 9px; border: 1px dashed var(--line); border-radius: 6px;
   background: transparent; color: var(--muted); font-size: 10px; font-weight: 750; cursor: pointer;
 }
+
+/* 紧凑键值列表：.runtime-grid 是为全宽设置页写的四列布局，放进侧栏会被挤成一团 */
+.repo-stat-list { padding: 2px 14px 12px; display: grid; }
+.repo-stat-list > div {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  padding: 8px 0; border-bottom: 1px dashed #eef2f3; font-size: 11px;
+}
+.repo-stat-list > div:last-child { border-bottom: 0; }
+.repo-stat-list span { color: var(--muted); flex: 0 0 auto; }
+.repo-stat-list strong { text-align: right; font-weight: 750; overflow-wrap: anywhere; }
+.repo-stat-list .warn { color: #a4622a; }
 
 .graph-hover-card {
   position: absolute; z-index: 6; max-width: 290px; padding: 10px 12px; display: grid; gap: 5px;
@@ -546,6 +574,12 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 
 @media (max-width: 1050px) {
   .repo-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .repo-sidebar { max-height: none; }
+}
+
+@media (min-width: 1051px) {
+  /* 画布与侧栏严格等高，右侧滚动条只出现在侧栏内部 */
+  .repo-layout { align-items: stretch; }
 }
 
 .pr-panel {
