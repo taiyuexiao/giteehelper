@@ -45,6 +45,17 @@ export interface ImpactLine {
   moduleName: string;
   owner: string | null;
   severity: string;
+  /** 影响原因（规则判定） */
+  reasonLabel?: string | null;
+  reasonNature?: string | null;
+  reasonAction?: string | null;
+}
+
+export interface AffectedPull {
+  number: number;
+  title: string;
+  author: string | null;
+  shared: string[];
 }
 
 export async function sendFeishuText(text: string, target = config.feishuWebhookUrl) {
@@ -83,9 +94,9 @@ function shortTime(value: string | null) {
 export function buildCommitImpactCard(
   commits: CommitLine[],
   impacts: ImpactLine[],
-  options: { baseUrl?: string; maxPeople?: number; maxItemsPerPerson?: number } = {}
+  options: { baseUrl?: string; maxPeople?: number; maxItemsPerPerson?: number; affectedPulls?: AffectedPull[] } = {}
 ) {
-  const { baseUrl = "", maxPeople = 5, maxItemsPerPerson = 4 } = options;
+  const { baseUrl = "", maxPeople = 5, maxItemsPerPerson = 4, affectedPulls = [] } = options;
   const conflicts = impacts.filter((item) => item.severity === "blocking" || item.severity === "contract");
   const grouped = new Map<string, { owner: string; items: ImpactLine[]; conflicts: number }>();
   for (const item of impacts) {
@@ -115,7 +126,13 @@ export function buildCommitImpactCard(
     lines.push(`影响 ${people.length} 人 · ${total} 个工作项${conflicts.length ? `（其中 ${conflicts.length} 项为契约/阻塞级）` : ""}`);
     for (const person of people.slice(0, maxPeople)) {
       lines.push(`▸ ${person.owner}${person.conflicts ? " ⚠ 需确认" : ""}`);
-      for (const item of person.items.slice(0, maxItemsPerPerson)) lines.push(`   · ${item.moduleName}`);
+      for (const item of person.items.slice(0, maxItemsPerPerson)) {
+        lines.push(`   · ${item.moduleName}`);
+        // 影响原因要写清楚"为什么"，否则收到的人只知道被点名、不知道要做什么
+        if (item.reasonLabel) {
+          lines.push(`     原因：${item.reasonLabel}${item.reasonAction ? ` → ${item.reasonAction}` : ""}`);
+        }
+      }
       if (person.items.length > maxItemsPerPerson) lines.push(`   · 其余 ${person.items.length - maxItemsPerPerson} 项见控制台`);
     }
     if (people.length > maxPeople) lines.push(`其余 ${people.length - maxPeople} 人见控制台。`);
@@ -123,6 +140,15 @@ export function buildCommitImpactCard(
       const owners = [...new Set(conflicts.map((item) => item.owner?.trim() || "未分配负责人"))];
       lines.push(`⚠ 契约/阻塞级影响涉及：${owners.slice(0, 4).join("、")}${owners.length > 4 ? " 等" : ""}`);
     }
+  }
+  if (affectedPulls.length) {
+    lines.push("");
+    lines.push(`⚠ 主干这次前进会影响 ${affectedPulls.length} 个在飞 PR：`);
+    for (const pull of affectedPulls.slice(0, 4)) {
+      lines.push(`   · !${pull.number} ${pull.title.slice(0, 30)}${pull.author ? `（${pull.author}）` : ""} —— 共同改动 ${pull.shared.length} 个文件`);
+    }
+    if (affectedPulls.length > 4) lines.push(`   其余 ${affectedPulls.length - 4} 个见控制台`);
+    lines.push("   这些 PR 需要合并同步后重跑门禁。");
   }
   if (baseUrl) lines.push(`控制台：${baseUrl}/repo`);
   const text = lines.join("\n");

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { seed } from "../src/server/seed.js";
 import { analyzeEvent, tokenize } from "../src/server/impact.js";
 import { versionsCompatible } from "../src/server/integration.js";
+import { execute } from "../src/server/db.js";
 
 seed();
 
@@ -80,4 +81,38 @@ test("分词会剔除通用词并保留有区分度的词", () => {
   assert.equal(terms.includes("docs"), false);
   assert.equal(terms.includes("更新"), false);
   assert.ok(terms.includes("退款"), "应保留有区分度的中文词");
+});
+
+/**
+ * 区域共用模式的证据问题：一个路径模式被多个工作项共用时，它只能定位到"区域"。
+ * 但文件确实落在本模块声明的模式里，这条路径证据必须留下——否则影响会退化成
+ * 纯语义猜测（"看不出为什么说影响我"），而且 once 用证据类型判断是否收敛，
+ * 收敛会永久失效。这里同时锁住两件事：证据留痕 + 收敛能力。
+ */
+test("共用模式下仍保留路径证据，且无歧义时收敛成一条区域影响", () => {
+  for (const key of ["test-shared-a", "test-shared-b", "test-shared-c"]) {
+    execute(
+      `INSERT INTO modules (project_id, module_key, name, owner_user_id, status, paths_json, scenarios_json, provides_json, requires_json, test_command, description)
+       VALUES (1, ?, ?, NULL, 'active', ?, '[]', '[]', '[]', '', '')`,
+      [key, `共享区域工作项${key.slice(-1).toUpperCase()}`, JSON.stringify(["src/shared-area/**"])]
+    );
+  }
+
+  // 1) 标题点名了其中一个工作项：语义词把它从"区域"里挑出来，影响要带路径证据
+  const named = analyze(["src/shared-area/service/Alpha.java"], "共享区域工作项A 的接口调整");
+  const hit = named.impacts.filter((impact) => impact.evidence.some((item) => item.label.includes("共享区域工作项A")));
+  const targeted = named.impacts.find((impact) => impact.moduleId !== null && impact.evidence.some((item) => item.type === "path"));
+  assert.ok(targeted, "被点名的工作项应有带路径证据的影响");
+  assert.ok(
+    targeted!.evidence.some((item) => item.type === "path" && item.label.includes("src/shared-area/service/Alpha.java")),
+    "路径证据必须保留具体文件，即使模式是区域共用的"
+  );
+  assert.equal(hit.length, 0, "语义词只用于升级证据，不应该是唯一依据");
+
+  // 2) 没有语义词消歧：只出一条区域影响，绝不给区域内每个工作项都发通知
+  const ambiguous = analyze(["src/shared-area/service/Beta.java"], "调整实现");
+  const perModule = ambiguous.impacts.filter((impact) => impact.moduleId !== null);
+  const areaLevel = ambiguous.impacts.filter((impact) => impact.moduleId === null && impact.evidence.some((item) => item.type === "area"));
+  assert.equal(perModule.length, 0, "共用模式无法定位到具体工作项时不应逐模块产生通知");
+  assert.ok(areaLevel.length >= 1, "应收敛成一条区域级影响");
 });

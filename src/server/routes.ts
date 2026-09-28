@@ -8,6 +8,9 @@ import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.
 import { createIntegrationRun, getRun } from "./integration.js";
 import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, listWebhookDeliveries, reanalyzeAll, recordWebhookDelivery } from "./commits.js";
 import { buildRepoGraph } from "./repograph.js";
+import { getPull, listPulls, pullGraph, pullStats, syncPullRequests } from "./pulls.js";
+import { applyPatternFixes, patternFixPreview, patternHealth } from "./repohealth.js";
+import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
@@ -714,6 +717,66 @@ router.post("/webhooks/gitee", (req, res) => {
       console.error("[gitee webhook]", error instanceof Error ? error.message : error);
     });
   });
+});
+
+router.get("/pulls", requireAuth, (req, res) => {
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const limit = Number(req.query.limit) || 100;
+  res.json({ pulls: listPulls({ state, limit }), stats: pullStats() });
+});
+
+router.get("/pulls/graph", requireAuth, (req, res) => {
+  res.json(pullGraph(Number(req.query.limit) || 120));
+});
+
+router.get("/pulls/:number", requireAuth, (req, res) => {
+  const pull = getPull(Number(req.params.number));
+  if (!pull) {
+    res.status(404).json({ error: "pull not found" });
+    return;
+  }
+  res.json(pull);
+});
+
+router.get("/repo/pattern-health", requireAuth, async (_req, res) => {
+  try {
+    res.json(await patternHealth());
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "pattern health failed" });
+  }
+});
+
+router.get("/repo/pattern-fix", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    res.json(await patternFixPreview());
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "preview failed" });
+  }
+});
+
+router.post("/repo/pattern-fix", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    res.json(await applyPatternFixes({ includeReview: body.includeReview === true }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "apply failed" });
+  }
+});
+
+router.get("/reasons", requireAuth, (_req, res) => {
+  res.json({
+    natures: NATURE_LABELS as Record<ReasonNature, string>,
+    samples: classifyReasons({ files: [], semanticOnly: true })
+  });
+});
+
+router.post("/gitee/sync-pulls", requireAuth, requireAdmin, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  try {
+    res.json(await syncPullRequests({ withComments: body.withComments === true, withFiles: true }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "pull sync failed" });
+  }
 });
 
 router.get("/webhooks/deliveries", requireAuth, (_req, res) => {

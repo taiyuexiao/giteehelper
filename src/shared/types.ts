@@ -86,6 +86,11 @@ export interface Impact {
   reason: string;
   evidence: Evidence[];
   nextAction: string;
+  /** 影响原因（规则判定）：为什么这个模块会受影响 */
+  reasonCode?: string | null;
+  reasonLabel?: string | null;
+  reasonNature?: string | null;
+  reasonAction?: string | null;
   status: "open" | "acknowledged" | "resolved" | "ignored";
   createdAt: string;
 }

@@ -34,7 +34,10 @@ export interface CommitAnalysis {
   subject: string;
   summary: string;
   issueRefs: string[];
-  affectedModules: Array<{ id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string }>;
+  affectedModules: Array<{
+    id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string;
+    reasonLabel?: string | null; reasonNature?: string | null; reasonAction?: string | null;
+  }>;
   conflict: boolean;
   severity: Severity;
   fileCount: number;
@@ -159,7 +162,10 @@ export function ingestCommit(commit: CommitInput, projectId = 1) {
       owner: module?.owner ?? null,
       severity: impact.severity,
       reason: impact.reason,
-      nextAction: impact.nextAction
+      nextAction: impact.nextAction,
+      reasonLabel: impact.reasonLabel ?? null,
+      reasonNature: impact.reasonNature ?? null,
+      reasonAction: impact.reasonAction ?? null
     };
   });
 
@@ -211,7 +217,10 @@ export function describeImpacts(impacts: Impact[]) {
     return {
       moduleName: module?.name ?? "未归属影响",
       owner: module?.owner ?? null,
-      severity: impact.severity
+      severity: impact.severity,
+      reasonLabel: impact.reasonLabel ?? null,
+      reasonNature: impact.reasonNature ?? null,
+      reasonAction: impact.reasonAction ?? null
     };
   });
 }
@@ -392,10 +401,10 @@ export function reanalyzeAll(projectId = 1) {
     }, projectId);
     for (const item of analysis.impacts) {
       execute(
-        `INSERT INTO impacts (event_id, module_id, user_id, severity, category, reason, evidence_json, next_action, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO impacts (event_id, module_id, user_id, severity, category, reason, evidence_json, next_action, status, reason_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [event.id, item.moduleId, item.userId, item.severity, item.category, item.reason,
-          JSON.stringify(item.evidence), item.nextAction, item.status]
+          JSON.stringify(item.evidence), item.nextAction, item.status, item.reasonCode ?? null]
       );
     }
   }

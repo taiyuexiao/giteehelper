@@ -17,3 +17,6 @@ docs/diagrams/*.visual-check.*
 
 # 本地视觉调试脚本（Playwright 驱动，不应入库）
 .pw-*.mjs
+
+# PR 评论分析用的临时数据
+.pr-analysis/

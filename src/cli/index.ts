@@ -7,6 +7,8 @@ import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
+import { pullStats, syncPullRequests } from "../server/pulls.js";
+import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { loadRuntimeSettings } from "../server/settings.js";
 import type { ContractRef } from "../shared/types.js";
 
@@ -140,6 +142,39 @@ async function main() {
       printJson(await createIntegrationRun(args[1], Number(args[2]) || null));
       return 0;
     }
+    case "sync-pulls":
+      printJson(await syncPullRequests({ withComments: args[0] === "--with-comments" }));
+      return 0;
+    case "pulls":
+      printJson(pullStats());
+      return 0;
+    case "pattern-health": {
+      const report = await patternHealth();
+      printJson({
+        files: report.files, modules: report.modules, ok: report.ok,
+        partial: report.partial, dead: report.dead, ghostPrefixes: report.ghostPrefixes,
+        worst: report.modules_detail.filter((item) => item.verdict === "dead").slice(0, 10)
+          .map((item: { moduleName: string; owner: string | null; patterns: string[] }) =>
+            ({ module: item.moduleName, owner: item.owner, patterns: item.patterns }))
+      });
+      return report.dead === 0 ? 0 : 1;
+    }
+    case "pattern-fix": {
+      if (args[0] === "--apply") {
+        printJson(await applyPatternFixes({ includeReview: args.includes("--include-review") }));
+        return 0;
+      }
+      const preview = await patternFixPreview();
+      printJson({
+        files: preview.files, deadBefore: preview.deadBefore, fixable: preview.fixable,
+        pendingReviewDocs: preview.pendingReview,
+        filesBeforeTotal: preview.filesBeforeTotal, filesAfterTotal: preview.filesAfterTotal,
+        samples: preview.fixes.filter((item) => item.filesAfter > item.filesBefore).slice(0, 8)
+          .map((item: { moduleName: string; before: string[]; after: string[]; filesBefore: number; filesAfter: number }) =>
+            ({ module: item.moduleName, before: item.before[0], after: item.after[0], hits: `${item.filesBefore} → ${item.filesAfter}` }))
+      });
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -174,6 +209,10 @@ Commands:
   giteehelper manifest validate
   giteehelper contract test
   giteehelper integration run <module-key> [event-id]
+  giteehelper pattern-health
+  giteehelper pattern-fix [--apply] [--include-review]
+  giteehelper sync-pulls [--with-comments]
+  giteehelper pulls
   giteehelper reanalyze
   giteehelper cleanup misleading-data
   giteehelper status <run-id>

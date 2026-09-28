@@ -1,4 +1,5 @@
 import type { Evidence, Impact, Module, Rule, Severity } from "../shared/types.js";
+import { classifyReasons, hasImplementationFile, primaryReason, type ReasonContext } from "./reason.js";
 import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 
 export interface EventInput {
@@ -33,7 +34,7 @@ const categoryKeywords: Record<string, string[]> = {
  * 通配符转正则。旧实现先替换 "**" 再替换 "*"，会把生成的 ".*" 再次拆成 ".[^/]*"，
  * 导致 "src/server/**" 只能匹配一层目录，深层路径全部漏配。
  */
-function wildcardMatch(value: string, pattern: string): boolean {
+export function wildcardMatch(value: string, pattern: string): boolean {
   const normalized = value.replace(/\\/g, "/");
   const source = pattern.replace(/\\/g, "/");
   let regex = "";
@@ -187,6 +188,8 @@ const SHARED_PATTERN_LIMIT = 2;
 const SEMANTIC_DF_RATIO = 0.05;
 
 const SHORT_CJK_TERM = /^[\u3400-\u9fff]{2}$/;
+/** 单条影响最多保留几条路径证据，其余折叠成计数 */
+const EVIDENCE_PATH_LIMIT = 5;
 
 /**
  * 2 字中文词太容易成为长模块名的子串（"部署" ⊂ "底座 · 目标环境重复部署与回退演练"），
@@ -204,6 +207,7 @@ function moduleMatches(module: Module, paths: string[], terms: string[], sharedP
   const areas: string[] = [];
   let specific = false;
 
+  const pathHits: Evidence[] = [];
   for (const path of paths) {
     const matched = module.paths.filter((pattern) => wildcardMatch(path, pattern));
     if (matched.length === 0) continue;
@@ -211,11 +215,23 @@ function moduleMatches(module: Module, paths: string[], terms: string[], sharedP
     const own = matched.filter((pattern) => !sharedPatterns.has(pattern));
     if (own.length > 0) {
       specific = true;
-      evidence.push({ type: "path", id: path, label: `变更路径 ${path}` });
+      pathHits.push({ type: "path", id: path, label: `变更路径 ${path}` });
     } else {
       areas.push(matched[0]);
-      evidence.push({ type: "area", id: matched[0], label: `区域 ${matched[0]}` });
+      // 模式被多个模块共用，说明它只能定位到"区域"；但文件确实落在本模块声明的路径里，
+      // 这条证据本身是成立的，必须留下——否则影响就只剩语义猜测，看起来像凭空推断。
+      // （是否合并成一条区域影响由 specific 决定，不由证据类型决定）
+      pathHits.push({ type: "path", id: path, label: `变更路径 ${path}（区域共用模式 ${matched[0]}）` });
     }
+  }
+  // 一次提交可能动几十个文件，证据只留前几条，其余折叠成一条计数，避免 evidence_json 无限膨胀
+  evidence.push(...pathHits.slice(0, EVIDENCE_PATH_LIMIT));
+  if (pathHits.length > EVIDENCE_PATH_LIMIT) {
+    evidence.push({
+      type: "path",
+      id: `+${pathHits.length - EVIDENCE_PATH_LIMIT}`,
+      label: `另有 ${pathHits.length - EVIDENCE_PATH_LIMIT} 个文件落在本模块路径模式内`
+    });
   }
 
   const exactTerms = terms.filter((term) => termMatchesModule(term, module)).slice(0, 3);
@@ -249,7 +265,9 @@ function classify(event: EventInput, paths: string[], text: string): { severity:
   return { severity: "informational", category: "change", nextAction: "查看变化是否需要下游调整" };
 }
 
-export function analyzeEvent(event: EventInput, projectId = 1) {
+export type ReasonOverrides = Pick<ReasonContext, "pull" | "parallelPulls" | "unmergedReferences">;
+
+export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOverrides = {}) {
   const payload = event.payload ?? {};
   const paths = collectPaths(payload);
   const text = `${event.title}\n${textOf(payload)}`;
@@ -326,8 +344,10 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
     if (sharedScenario && !evidence.some((item) => item.type === "scenario")) {
       evidence.push({ type: "scenario", label: "共享业务场景" });
     }
-    // 只有区域级共用模式命中时，收敛成一条区域影响：否则一条 docs 提交会给区域内几十个工作项的负责人同时发通知
-    const onlyArea = !match.specific && evidence.every((item) => item.type === "area" || item.type === "scenario" || item.type === "event" || item.type === "rule");
+    // 只有区域级共用模式命中时，收敛成一条区域影响：否则一条 docs 提交会给区域内几十个工作项的负责人同时发通知。
+    // 判据是"有没有被专有模式或语义词定位到"（specific），不再看证据类型——
+    // 共用模式现在也会留下路径证据，用证据类型判断会让收敛永久失效。
+    const onlyArea = !match.specific;
     if (onlyArea) {
       const area = match.areas[0] ?? "未标注区域";
       const bucket = areaBuckets.get(area) ?? { count: 0, owners: new Set<string>() };
@@ -336,6 +356,16 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
       areaBuckets.set(area, bucket);
       continue;
     }
+    const reasonHit = primaryReason(classifyReasons({
+      files: paths,
+      semanticOnly: !evidence.some((item) => item.type === "path"),
+      severity,
+      title: event.title,
+      pull: context.pull ?? null,
+      parallelPulls: context.parallelPulls,
+      unmergedReferences: context.unmergedReferences,
+      hasImplementation: hasImplementationFile(paths)
+    }));
     results.push({
       eventId: 0,
       moduleId: module.id,
@@ -348,7 +378,11 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
         ...(event.url ? [{ type: "event", id: event.sourceId, label: "来源变化", url: event.url }] : []),
         ...matchedRules.map((rule) => ({ type: "rule", id: rule.ruleKey, label: rule.name }))
       ],
-      nextAction,
+      nextAction: reasonHit?.action ?? nextAction,
+      reasonCode: reasonHit?.code ?? null,
+      reasonLabel: reasonHit?.label ?? null,
+      reasonNature: reasonHit?.nature ?? null,
+      reasonAction: reasonHit?.action ?? null,
       status: "open"
     });
   }
@@ -390,7 +424,11 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
   return { event, paths, severity, category, nextAction, impacts: results };
 }
 
-export function persistEventAndImpacts(event: EventInput, projectId = 1) {
+export function persistEventAndImpacts(
+  event: EventInput,
+  projectId = 1,
+  context: ReasonOverrides = {}
+) {
   const existing = queryOne<{ id: number }>(
     `SELECT id FROM change_events WHERE project_id = ? AND source = ? AND source_id = ? AND event_type = ? AND action = ?`,
     [projectId, event.source, event.sourceId, event.eventType, event.action]
@@ -402,13 +440,14 @@ export function persistEventAndImpacts(event: EventInput, projectId = 1) {
     [projectId, event.source, event.sourceId, event.eventType, event.action, event.title, event.author, event.branch ?? null, event.url ?? null, JSON.stringify(event.payload ?? {})]
   );
   const eventId = Number(result.lastInsertRowid);
-  const analysis = analyzeEvent({ ...event, payload: event.payload ?? {} }, projectId);
+  const analysis = analyzeEvent({ ...event, payload: event.payload ?? {} }, projectId, context);
   const impacts: Impact[] = [];
   for (const item of analysis.impacts) {
     const inserted = execute(
-      `INSERT INTO impacts (event_id, module_id, user_id, severity, category, reason, evidence_json, next_action, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [eventId, item.moduleId, item.userId, item.severity, item.category, item.reason, JSON.stringify(item.evidence), item.nextAction, item.status]
+      `INSERT INTO impacts (event_id, module_id, user_id, severity, category, reason, evidence_json, next_action, status, reason_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [eventId, item.moduleId, item.userId, item.severity, item.category, item.reason,
+        JSON.stringify(item.evidence), item.nextAction, item.status, item.reasonCode ?? null]
     );
     impacts.push({ ...item, id: Number(inserted.lastInsertRowid), eventId, createdAt: new Date().toISOString() });
   }

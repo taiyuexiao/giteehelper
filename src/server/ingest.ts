@@ -7,6 +7,8 @@ import {
   CONFLICT_SEVERITIES, describeImpacts, ingestCommit, recordWebhookDelivery, updateWebhookDelivery
 } from "./commits.js";
 import { buildCommitImpactCard, sendFeishuText, type CommitLine, type ImpactLine } from "./feishu.js";
+import { mineReferences, pullsTouchedBy } from "./pulls.js";
+import { queryAll as queryAllRows } from "./db.js";
 
 /** 一次 Push 里最多自动创建多少条联调记录，避免刷屏 */
 const MAX_RUNS_PER_PUSH = 5;
@@ -27,6 +29,18 @@ function moduleKeyOf(moduleId: number) {
 
 function isConflict(severity: string) {
   return CONFLICT_SEVERITIES.includes(severity as never);
+}
+
+function collectEventFiles(event: EventInput): string[] {
+  const payload = (event.payload ?? {}) as Record<string, unknown>;
+  const files = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) files.add(value.trim());
+    else if (Array.isArray(value)) value.forEach(add);
+  };
+  add(payload.files);
+  add(payload.paths);
+  return [...files];
 }
 
 function consoleLink(path: string) {
@@ -86,7 +100,12 @@ export async function ingestGiteeWebhook(
         conflicts += conflictImpacts.length;
         for (const module of conflictImpacts) if (module.id) conflictedModules.add(module.id);
         lines.push(...analysis.affectedModules.map((module) => ({
-          moduleName: module.name, owner: module.owner, severity: module.severity
+          moduleName: module.name,
+          owner: module.owner,
+          severity: module.severity,
+          reasonLabel: module.reasonLabel ?? null,
+          reasonNature: module.reasonNature ?? null,
+          reasonAction: module.reasonAction ?? null
         })));
         commitLines.push({
           shortSha: commit.sha.slice(0, 8),
@@ -105,20 +124,61 @@ export async function ingestGiteeWebhook(
         if (moduleKey) runs.push((await createIntegrationRun(moduleKey, eventId)).id);
       }
 
+      // 主干前进会影响在飞 PR：这是该团队反复人工做的事（「进 main 前的合并同步」）
+      const pushedFiles = pushed.flatMap((commit) => (commit.files ?? []).map((file) => file.path));
+      const onMain = pushed.some((commit) => /^(main|master)$/.test(commit.branch ?? ""));
+      const affectedPulls = onMain && pushedFiles.length ? pullsTouchedBy(pushedFiles) : [];
+
       // 每一次推送都广播：群里能持续看到"谁提交了什么、影响了谁"
       if (commitLines.length > 0) {
-        await sendFeishuText(buildCommitImpactCard(commitLines, lines, { baseUrl: config.publicBaseUrl }));
+        await sendFeishuText(buildCommitImpactCard(commitLines, lines, {
+          baseUrl: config.publicBaseUrl,
+          affectedPulls
+        }));
         notified = true;
       }
       updateWebhookDelivery(deliveryId, {
         status: "processed",
-        detail: `新提交 ${commits} 个，影响 ${lines.length} 项，冲突 ${conflicts} 项`,
+        detail: `新提交 ${commits} 个，影响 ${lines.length} 项，冲突 ${conflicts} 项${affectedPulls.length ? `，影响 ${affectedPulls.length} 个在飞 PR` : ""}`,
         eventId, commits, impacts, conflicts
       });
       return { deliveryId, eventId, commits, impacts, conflicts, runs, notified };
     }
 
-    const persisted = persistEventAndImpacts(event);
+    const pullNumber = Number(payload.number ?? payload.iid ?? (payload.pull_request as Record<string, unknown> | undefined)?.number ?? 0);
+    const pullRow = event.eventType === "pull_request" && pullNumber
+      ? queryOne<{ baseRef: string | null; headRef: string | null; number: number }>(
+        `SELECT number, base_ref AS baseRef, head_ref AS headRef FROM pull_requests WHERE project_id = 1 AND number = ?`,
+        [pullNumber]
+      )
+      : undefined;
+
+    // 这次改动与哪些在飞 PR 撞了同一批文件（返工成本落在后合入者）
+    const eventFiles = collectEventFiles(event);
+    const parallelPulls = eventFiles.length
+      ? pullsTouchedBy(eventFiles).filter((pull) => pull.number !== pullNumber)
+      : [];
+
+    // 引用了哪些尚未合入主干的 PR —— 它们的说法不能当作已生效的事实
+    const mergedNumbers = new Set(queryAllRows<{ number: number }>(
+      `SELECT number FROM pull_requests WHERE project_id = 1 AND merged_at IS NOT NULL`
+    ).map((row) => row.number));
+    const unmergedReferences = mineReferences(`${event.title}\n${String(payload.body ?? "")}`)
+      .filter((number) => !mergedNumbers.has(number))
+      .slice(0, 5);
+
+    const persisted = persistEventAndImpacts(event, 1, {
+      pull: pullRow
+        ? {
+          number: pullRow.number,
+          base: pullRow.baseRef ?? "main",
+          head: pullRow.headRef ?? "",
+          headChanged: /update|synchronize|reopen/i.test(event.action)
+        }
+        : null,
+      parallelPulls,
+      unmergedReferences
+    });
     eventId = persisted.eventId;
     impacts = persisted.impacts.length;
     conflicts = persisted.impacts.filter((impact) => isConflict(impact.severity)).length;

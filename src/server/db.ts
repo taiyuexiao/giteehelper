@@ -189,11 +189,66 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS pull_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  number INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  base_ref TEXT,
+  head_ref TEXT,
+  head_sha TEXT,
+  author_login TEXT,
+  author_email TEXT,
+  mergeable INTEGER,
+  merged_at TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  files_json TEXT NOT NULL DEFAULT '[]',
+  additions INTEGER NOT NULL DEFAULT 0,
+  deletions INTEGER NOT NULL DEFAULT 0,
+  synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, number)
+);
+
+-- PR 之间的引用关系：从评审评论与正文里挖「!78」这类引用，构成 PR 级依赖图
+CREATE TABLE IF NOT EXISTS pull_references (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  from_number INTEGER NOT NULL,
+  to_number INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, from_number, to_number)
+);
+
+CREATE TABLE IF NOT EXISTS repo_state (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  default_branch TEXT NOT NULL DEFAULT 'main',
+  head_sha TEXT,
+  head_commit_at TEXT,
+  synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pulls_state ON pull_requests(state);
+CREATE INDEX IF NOT EXISTS idx_pull_refs_from ON pull_references(from_number);
 CREATE INDEX IF NOT EXISTS idx_commits_committed_at ON commits(committed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created_at ON webhook_deliveries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_impacts_event ON impacts(event_id);
 `);
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((item) => item.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+// 影响原因：规则判定出来的"为什么这个模块会受影响"，通知里要显示
+ensureColumn("impacts", "reason_code", "TEXT");
+ensureColumn("commits", "author_email_key", "TEXT");
 
 export function queryAll<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {
   return db.prepare(sql).all(...params as never[]) as T[];
