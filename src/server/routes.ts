@@ -16,7 +16,7 @@ import {
   createBranch, createPullRequest, extractPushCommits, fetchCommitDetail, listCommits as listGiteeCommits,
   listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature
 } from "./gitee.js";
-import { buildImpactCard, sendFeishuText } from "./feishu.js";
+import { sendFeishuText } from "./feishu.js";
 import type { GraphData, GraphEdge, GraphNode, Impact, Role, Severity, User } from "../shared/types.js";
 
 type AuthRequest = express.Request & { user?: User };

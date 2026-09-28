@@ -216,6 +216,51 @@ export async function fetchCommitDetail(repo: string, sha: string): Promise<Comm
   };
 }
 
+/**
+ * 取某个 PR 的变更文件列表。
+ * Gitee 的 PR 回调里不带文件清单，导致只能拿 PR 标题/正文去猜影响谁——
+ * 长正文会凑出大量假影响（实测一个 docs PR 命中 20 个工作项）。
+ * 回查一次文件列表就能改用真实路径归属，准确度完全不同。
+ */
+export async function fetchPullRequestFiles(repo: string, number: string | number): Promise<string[]> {
+  const [owner, name] = splitRepo(repo);
+  const rows = await giteeRequest<Array<Record<string, unknown>>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${encodeURIComponent(String(number))}/files`
+  );
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => String(row.filename ?? row.path ?? "").trim())
+    .filter((value) => value.length > 0);
+}
+
+export interface PullCommit {
+  sha: string;
+  email: string | null;
+  name: string | null;
+  message: string;
+  date: string | null;
+}
+
+/** 取 PR 里的提交。用途是拿提交者邮箱——Gitee 账号是多人共用的，账号名没有区分度。 */
+export async function fetchPullRequestCommits(repo: string, number: string | number): Promise<PullCommit[]> {
+  const [owner, name] = splitRepo(repo);
+  const rows = await giteeRequest<Array<Record<string, unknown>>>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${encodeURIComponent(String(number))}/commits`
+  );
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const commit = (row.commit ?? {}) as Record<string, unknown>;
+    const author = (commit.author ?? {}) as Record<string, unknown>;
+    return {
+      sha: String(row.sha ?? ""),
+      email: asString(author.email) ?? null,
+      name: asString(author.name) ?? null,
+      message: asString(commit.message) ?? "",
+      date: asString(author.date) ?? null
+    };
+  });
+}
+
 export async function createBranch(repo: string, branchName: string, ref: string) {
   const [owner, name] = splitRepo(repo);
   return giteeRequest(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches`, {

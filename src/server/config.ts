@@ -18,6 +18,8 @@ export const config = {
   giteeRepo: process.env.GITEE_REPO ?? "",
   giteeDefaultBranch: process.env.GITEE_DEFAULT_BRANCH ?? "main",
   feishuWebhookUrl: process.env.FEISHU_WEBHOOK_URL ?? "",
+  // 通知里要给出可点击的控制台链接，因此需要知道自己的对外地址
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, ""),
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
   sessionSecret: process.env.SESSION_SECRET ?? "local-development-session-secret",

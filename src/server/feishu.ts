@@ -9,15 +9,6 @@ type ImpactSummary = {
   moduleName?: string | null;
 };
 
-export interface CommitConflictLine {
-  sha: string;
-  shortSha: string;
-  summary: string;
-  author: string;
-  url?: string | null;
-  conflicts: Array<{ moduleName: string; severity: string; owner?: string | null; nextAction: string }>;
-}
-
 const severityLabels: Record<string, string> = {
   blocking: "阻塞",
   contract: "契约",
@@ -38,6 +29,24 @@ function moduleFromReason(reason: string) {
   return match?.[1] ?? (reason.includes("全局影响") ? "全局影响" : "未归属影响");
 }
 
+export interface CommitLine {
+  shortSha: string;
+  summary: string;
+  /** 提交者身份：多人共用一个 Gitee 账号，因此必须以提交里的邮箱为准 */
+  authorName: string;
+  authorEmail: string | null;
+  url: string | null;
+  branch: string | null;
+  committedAt: string | null;
+  linkCount: number;
+}
+
+export interface ImpactLine {
+  moduleName: string;
+  owner: string | null;
+  severity: string;
+}
+
 export async function sendFeishuText(text: string, target = config.feishuWebhookUrl) {
   if (!target) {
     audit(null, "system", "feishu_dry_run", "notification", "feishu", { text });
@@ -54,50 +63,68 @@ export async function sendFeishuText(text: string, target = config.feishuWebhook
   return { ok: true, dryRun: false };
 }
 
-export function buildImpactCard(eventTitle: string, impacts: ImpactSummary[]) {
-  const visible = impacts.filter(isOperationalImpact);
-  const counts = severityOrder
-    .map((severity) => ({ severity, count: visible.filter((impact) => impact.severity === severity).length }))
-    .filter((item) => item.count > 0)
-    .map((item) => `${severityLabels[item.severity] ?? item.severity} ${item.count}`)
-    .join(" · ");
-  const preview = visible.slice(0, 6).map((impact) => {
-    const label = severityLabels[impact.severity] ?? impact.severity;
-    const owner = impact.owner ? `｜负责人 ${impact.owner}` : "";
-    return `- ${impact.moduleName ?? moduleFromReason(impact.reason)}｜${label}${owner}｜${impact.nextAction}`;
-  });
-  const omitted = Math.max(0, visible.length - preview.length);
-  return [
-    "【GiteeHelper】影响提示",
-    `变更：${eventTitle}`,
-    `影响：${visible.length} 项${counts ? `（${counts}）` : ""}`,
-    ...preview,
-    ...(omitted > 0 ? [`其余 ${omitted} 项已合并，请在 GiteeHelper 控制台查看证据链。`] : []),
-    "详情：GiteeHelper 控制台"
-  ].join("\n");
+function shortTime(value: string | null) {
+  if (!value) return "未知";
+  const stamp = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  if (!Number.isFinite(stamp)) return value;
+  const minutes = Math.round((Date.now() - stamp) / 60000);
+  if (minutes < 60) return `${Math.max(minutes, 0)} 分钟前`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} 小时前`;
+  return `${Math.round(minutes / 1440)} 天前`;
 }
 
 /**
- * 新提交的冲突提醒：只列出真正需要下游动作的模块和它的负责人，
- * 保证「谁需要处理」在飞书里一眼可见。
+ * 新提交影响卡片。
+ * 格式目标：一眼看出「谁提交的、这次提交影响了谁、影响他的哪一部分」。
+ * - 提交者按提交里的邮箱显示（多人共用 Gitee 账号，账号名没有区分度）
+ * - 影响项按负责人分组，而不是铺一个几十条的工作项清单
+ * - 给出可直接点击的提交链接与控制台链接
  */
-export function buildCommitConflictCard(branch: string | null, commits: CommitConflictLine[], totalCommits: number, unattributed: number) {
-  const conflictCount = commits.reduce((total, commit) => total + commit.conflicts.length, 0);
-  const lines: string[] = [
-    "【GiteeHelper】新提交冲突提醒",
-    `分支：${branch || "未知"} · 新提交 ${totalCommits} 个 · 冲突 ${conflictCount} 项`
-  ];
-  for (const commit of commits.slice(0, 3)) {
-    lines.push(`${commit.shortSha}｜${commit.summary}｜${commit.author}`);
-    for (const conflict of commit.conflicts.slice(0, 2)) {
-      const label = severityLabels[conflict.severity] ?? conflict.severity;
-      const owner = conflict.owner ? `｜负责人 ${conflict.owner}` : "｜负责人待确认";
-      lines.push(`　· ${conflict.moduleName}｜${label}${owner} → ${conflict.nextAction}`);
+export function buildCommitImpactCard(
+  commits: CommitLine[],
+  impacts: ImpactLine[],
+  options: { baseUrl?: string; maxPeople?: number; maxItemsPerPerson?: number } = {}
+) {
+  const { baseUrl = "", maxPeople = 5, maxItemsPerPerson = 4 } = options;
+  const conflicts = impacts.filter((item) => item.severity === "blocking" || item.severity === "contract");
+  const grouped = new Map<string, { owner: string; items: ImpactLine[]; conflicts: number }>();
+  for (const item of impacts) {
+    const owner = item.owner?.trim() || "未分配负责人";
+    const group = grouped.get(owner) ?? { owner, items: [], conflicts: 0 };
+    if (!group.items.some((existing) => existing.moduleName === item.moduleName)) group.items.push(item);
+    if (item.severity === "blocking" || item.severity === "contract") group.conflicts += 1;
+    grouped.set(owner, group);
+  }
+  const people = [...grouped.values()].sort((a, b) => b.conflicts - a.conflicts || b.items.length - a.items.length);
+
+  const lines: string[] = ["【GiteeHelper】新提交影响"];
+  const head = commits[0];
+  if (head) {
+    const who = head.authorEmail ? `${head.authorName} <${head.authorEmail}>` : head.authorName;
+    lines.push(`提交者：${who}`);
+    lines.push(`内容：${head.summary}`);
+    if (head.url) lines.push(`链接：${head.url}`);
+    lines.push(`分支 ${head.branch || "未知"} ｜ ${shortTime(head.committedAt)}`);
+    if (commits.length > 1) lines.push(`本次推送共 ${commits.length} 个提交，以下为第 1 个，其余见控制台。`);
+  }
+
+  if (people.length === 0) {
+    lines.push("影响：没有命中他人负责的模块。");
+  } else {
+    const total = people.reduce((sum, person) => sum + person.items.length, 0);
+    lines.push(`影响 ${people.length} 人 · ${total} 个工作项${conflicts.length ? `（其中 ${conflicts.length} 项为契约/阻塞级）` : ""}`);
+    for (const person of people.slice(0, maxPeople)) {
+      lines.push(`▸ ${person.owner}${person.conflicts ? " ⚠ 需确认" : ""}`);
+      for (const item of person.items.slice(0, maxItemsPerPerson)) lines.push(`   · ${item.moduleName}`);
+      if (person.items.length > maxItemsPerPerson) lines.push(`   · 其余 ${person.items.length - maxItemsPerPerson} 项见控制台`);
+    }
+    if (people.length > maxPeople) lines.push(`其余 ${people.length - maxPeople} 人见控制台。`);
+    if (conflicts.length) {
+      const owners = [...new Set(conflicts.map((item) => item.owner?.trim() || "未分配负责人"))];
+      lines.push(`⚠ 契约/阻塞级影响涉及：${owners.slice(0, 4).join("、")}${owners.length > 4 ? " 等" : ""}`);
     }
   }
-  if (commits.length > 3) lines.push(`其余 ${commits.length - 3} 个冲突提交请在控制台查看。`);
-  if (unattributed > 0) lines.push(`${unattributed} 个提交未归属模块，请补充模块路径模式。`);
-  lines.push("详情：GiteeHelper 控制台 · 仓库全景");
+  if (baseUrl) lines.push(`控制台：${baseUrl}/repo`);
   const text = lines.join("\n");
-  return text.length > 1200 ? `${text.slice(0, 1180)}…` : text;
+  return text.length > 1400 ? `${text.slice(0, 1380)}…` : text;
 }

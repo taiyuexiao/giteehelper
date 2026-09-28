@@ -199,6 +199,23 @@ export function ingestCommit(commit: CommitInput, projectId = 1) {
   return { commitId, eventId: persisted.eventId, impacts, analysis, created: true };
 }
 
+/** 把影响翻译成「模块名 + 负责人」，通知要按人分组展示 */
+export function describeImpacts(impacts: Impact[]) {
+  return impacts.map((impact) => {
+    const module = impact.moduleId
+      ? queryOne<{ name: string; owner: string | null }>(
+        `SELECT m.name, u.display_name AS owner FROM modules m LEFT JOIN users u ON u.id = m.owner_user_id WHERE m.id = ?`,
+        [impact.moduleId]
+      )
+      : undefined;
+    return {
+      moduleName: module?.name ?? "未归属影响",
+      owner: module?.owner ?? null,
+      severity: impact.severity
+    };
+  });
+}
+
 export function listCommits(limit = 120, projectId = 1) {
   return queryAll(
     `SELECT c.id, c.sha, c.short_sha AS shortSha, c.subject, c.message, c.author_login AS authorLogin,

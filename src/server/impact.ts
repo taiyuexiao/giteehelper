@@ -133,6 +133,16 @@ export function isOperationalModule(module: Pick<Module, "moduleKey" | "name">) 
 const LATIN_TOKEN = /[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*/g;
 const CJK_RUN = /[\u3400-\u9fff]+/g;
 
+/**
+ * 不能出现在候选词首尾的虚词。
+ * 中文按 n-gram 切片时会把连词/助词切进片段里，产生「与安全」「项目与」「的测试」
+ * 这类根本不是词的碎片，它们会去命中长模块名并造出大量假影响。
+ * 只收几乎不会出现在实词首尾的虚词，避免误伤「在线」「上线」这类真实词。
+ */
+const BOUNDARY_STOPWORDS = new Set(
+  "与和及或的地得是为对从到把被而则就都也很更最等以之其该这那些个们并且但因所按依据向往给跟同于自至了着过吗呢吧啊".split("")
+);
+
 function isGenericTerm(term: string) {
   if (genericTerms.has(term)) return true;
   // 由通用词拼出的复合词同样没有区分度，例如 api-docs / docs_update
@@ -153,7 +163,12 @@ export function tokenize(text: string): string[] {
   for (const match of lower.matchAll(CJK_RUN)) {
     const run = match[0].slice(0, 80);
     for (let size = 2; size <= 4; size += 1) {
-      for (let index = 0; index + size <= run.length; index += 1) tokens.add(run.slice(index, index + size));
+      for (let index = 0; index + size <= run.length; index += 1) {
+        const piece = run.slice(index, index + size);
+        // 首尾是虚词的片段不是词，直接丢弃（真正的模块全名会以完整片段命中）
+        if (BOUNDARY_STOPWORDS.has(piece[0]) || BOUNDARY_STOPWORDS.has(piece[piece.length - 1])) continue;
+        tokens.add(piece);
+      }
     }
   }
   return [...tokens].filter((term) => !isGenericTerm(term));
@@ -217,7 +232,11 @@ function moduleMatches(module: Module, paths: string[], terms: string[], sharedP
 function classify(event: EventInput, paths: string[], text: string): { severity: Severity; category: string; nextAction: string } {
   const isMain = event.branch === "main" || event.branch === "master";
   const isMerged = ["merged", "merge", "closed"].includes(event.action.toLowerCase());
-  const contractPath = paths.some((path) => /contract|openapi|asyncapi|schema|api\//i.test(path));
+  // 测试文件不算契约：像 DatabaseSchemaSnapshotTest.java 只因为文件名带 Schema 就被判成契约级，
+  // 会把一条纯测试提交升级成"阻塞"，制造假冲突
+  const isTestPath = (path: string) =>
+    /(^|\/)(test|tests|__tests__)\//i.test(path) || /\.(test|spec)\.[jt]sx?$/i.test(path) || /Test\.java$/i.test(path);
+  const contractPath = paths.some((path) => !isTestPath(path) && /contract|openapi|asyncapi|schema|api\//i.test(path));
   const documentPath = paths.some((path) => /docs?\//i.test(path) || /\.(md|mdx)$/i.test(path));
   const keywordCategory = Object.entries(categoryKeywords)
     .map(([category, keywords]) => ({ category, matches: matchKeywords(text, keywords) }))
