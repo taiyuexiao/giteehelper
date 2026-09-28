@@ -42,7 +42,7 @@
 - WebHook 签名校验；
 - Push/PR/Note/Issue 事件入库；
 - 测试事件；
-- PR 摘要评论。
+- 飞书影响摘要。
 
 ### 验收
 - 伪造 WebHook 可产生事件；

@@ -4,7 +4,7 @@
 > 最近更新：2026-09-26
 
 ## 摘要
-接入层负责 Gitee Open API、WebHook 事件、PR 评论、修复 PR 和飞书通知。Gitee Token 只从 `.env` 读取，WebHook 支持明文 Secret 和 HMAC-SHA256 验签；飞书未配置时执行 dry-run 并写审计。
+接入层负责 Gitee Open API、WebHook 事件、修复 PR 和飞书通知；不自动回写 Gitee PR 评论。Gitee Token 只从 `.env` 读取，WebHook 支持明文 Secret 和 HMAC-SHA256 验签；飞书未配置时执行 dry-run 并写审计。
 
 ## 关键文件
 - `src/server/gitee.ts`
@@ -17,7 +17,7 @@
 - WebHook 接收 Push、PR、Note、Issue；
 - 事件统一化后进入影响分析；
 - 影响生成后创建最小联调 Run；
-- 可回写 PR 摘要评论；
+- 影响摘要只发送到飞书；Gitee PR 不回写评论；
 - 修复批准后可创建修复分支和 PR，默认不自动执行。
 
 ## 飞书能力
@@ -54,10 +54,11 @@ Token、WebHook Secret 和飞书 Webhook 使用服务器端 Secret Store；界�
 ## 已知限制
 - 未在 Gitee 真实仓库创建 WebHook，因为本地服务没有公网回调地址；
 - 飞书当前只支持群 Webhook 文本消息；
-- Gitee Check 以 PR 摘要评论作为 MVP 反馈面。
+- 影响反馈以飞书精简摘要和 GiteeHelper 证据链为唯一出口。
 
 ## 变更历史
 | 日期 | 变更 | 关联需求 |
 |---|---|---|
-| 2026-09-26 | 完成 Gitee API、WebHook、同步、PR 评论、修复 PR 接口和飞书通知 | 实施阶段 2、3、6 |
+| 2026-09-26 | 完成 Gitee API、WebHook、同步、修复 PR 接口和飞书通知 | 实施阶段 2、3、6 |
+| 2026-09-28 | 禁止自动回写 PR 评论，并将飞书消息压缩为模块级摘要 | 通知降噪 |
 | 2026-09-26 | 将 Gitee/飞书配置改为 Web 可编辑，并使用加密 Secret Store | 接入配置 |

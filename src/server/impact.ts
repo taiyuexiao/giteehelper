@@ -76,6 +76,18 @@ function ruleMatches(rule: Rule, event: EventInput, paths: string[], text: strin
   return Boolean(eventTypes?.length || branches?.length || keywords?.length || anyPath?.length);
 }
 
+const genericTerms = new Set([
+  "功能", "文档", "数据", "接口", "模块", "项目", "测试", "系统", "页面", "用户", "工作", "实现",
+  "配置", "服务", "运行", "报告", "平台", "模型", "内容", "列表", "详情", "基础", "统一", "支持",
+  "管理", "生成", "记录", "结果", "指标", "流程", "代码", "技术", "产品", "设计", "方案", "要求",
+  "环境", "性能", "安全", "权限", "账号", "登录", "工作台"
+]);
+
+export function isOperationalModule(module: Pick<Module, "moduleKey" | "name">) {
+  return !module.name.trim().startsWith("[示例]") && !module.name.trim().startsWith("[旧导入]") &&
+    !module.moduleKey.trim().startsWith("[示例]") && !module.moduleKey.trim().startsWith("[旧导入]");
+}
+
 function moduleMatches(module: Module, paths: string[], text: string): { matched: boolean; evidence: Evidence[] } {
   const evidence: Evidence[] = [];
   for (const path of paths) {
@@ -83,10 +95,25 @@ function moduleMatches(module: Module, paths: string[], text: string): { matched
       evidence.push({ type: "path", id: path, label: `变更路径 ${path}` });
     }
   }
-  const haystack = `${module.name}\n${module.description ?? ""}\n${module.scenarios.join(" ")}\n${module.provides.map((item) => item.key).join(" ")}\n${module.requires.map((item) => item.key).join(" ")}`.toLowerCase();
+
   const terms = [...text.toLowerCase().matchAll(/[\p{L}\p{N}_-]{2,}/gu)].map((match) => match[0]);
-  const semantic = terms.filter((term) => haystack.includes(term)).slice(0, 3);
-  for (const term of semantic) evidence.push({ type: "semantic", id: term, label: `语义关联 ${term}` });
+  const strongTerms = [...new Set(terms.filter((term) => !genericTerms.has(term)))];
+  const exactTargets = [
+    module.name.toLowerCase(),
+    module.moduleKey.toLowerCase(),
+    ...module.scenarios.map((item) => item.toLowerCase()),
+    ...module.provides.map((item) => item.key.toLowerCase()),
+    ...module.requires.map((item) => item.key.toLowerCase())
+  ];
+  const exactTerms = strongTerms.filter((term) => exactTargets.some((target) => target.includes(term))).slice(0, 3);
+  for (const term of exactTerms) evidence.push({ type: "semantic", id: term, label: `精确关联 ${term}` });
+
+  const description = (module.description ?? "").toLowerCase();
+  const descriptionTerms = strongTerms.filter((term) => term.length >= 3 && description.includes(term));
+  if (exactTerms.length === 0 && descriptionTerms.length >= 2) {
+    for (const term of descriptionTerms.slice(0, 2)) evidence.push({ type: "semantic", id: term, label: `描述关联 ${term}` });
+  }
+
   return { matched: evidence.length > 0, evidence };
 }
 
@@ -128,7 +155,7 @@ export function analyzeEvent(event: EventInput, projectId = 1) {
             m.status, m.paths_json, m.scenarios_json, m.provides_json, m.requires_json, m.test_command AS testCommand, m.description
      FROM modules m LEFT JOIN users u ON u.id = m.owner_user_id WHERE m.project_id = ?`,
     [projectId]
-  ).map((row) => ({
+  ).filter((row) => isOperationalModule(row)).map((row) => ({
     ...row,
     paths: parseJson<string[]>(row.paths_json, []),
     scenarios: parseJson<string[]>(row.scenarios_json, []),

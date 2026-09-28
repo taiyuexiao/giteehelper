@@ -9,7 +9,7 @@ import { createIntegrationRun, getRun, listModules } from "./integration.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { cleanupMisleadingData } from "./cleanup.js";
-import { createBranch, createPullComment, createPullRequest, listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature } from "./gitee.js";
+import { createBranch, createPullRequest, listPullRequests, normalizeGiteeEvent, testGiteeConnection, verifyGiteeSignature } from "./gitee.js";
 import { buildImpactCard, sendFeishuText } from "./feishu.js";
 import type { GraphData, GraphEdge, GraphNode, Impact, Role, Severity, User } from "../shared/types.js";
 
@@ -673,16 +673,6 @@ router.post("/webhooks/gitee", async (req, res) => {
   if (impacts.length) {
     const card = buildImpactCard(event.title, impacts);
     await sendFeishuText(card);
-  }
-  const pull = (req.body as Record<string, unknown>).pull_request as Record<string, unknown> | undefined;
-  if (pull && config.giteeRepo && impacts.length) {
-    const number = Number(pull.number ?? pull.id);
-    const summary = buildImpactCard(event.title, impacts);
-    try {
-      await createPullComment(config.giteeRepo, number, summary);
-    } catch (error) {
-      audit(null, "system", "gitee_comment_failed", "pull_request", number, { error: error instanceof Error ? error.message : String(error) });
-    }
   }
   res.status(202).json({ ok: true, eventId: saved.eventId, impacts: impacts.length, runs: runs.map((run) => run.id) });
 });

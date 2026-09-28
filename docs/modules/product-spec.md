@@ -91,7 +91,7 @@ Review 评论、Request Changes、合并者批注如果包含“必须、需要�
 - PR Ready/合并/评论触发增量联调；
 - 契约桩、真实/Stub 状态区分、联调矩阵；
 - 修复建议、Repair Bundle、本地测试与人工批准；
-- Gitee 摘要评论和飞书定向/群通知；
+- 飞书定向/群通知和 GiteeHelper 证据链，不回写 Gitee PR 评论；
 - CLI：`doctor`、`manifest validate`、`contract test`、`integration run`、`status`、`repair`；
 - 审计记录和规则版本。
 

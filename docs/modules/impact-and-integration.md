@@ -18,7 +18,9 @@
 3. 匹配模块路径、描述、契约和共享场景；
 4. 叠加规则严重度；
 5. 生成 `evidence` 与 `nextAction`；
-6. 无明确模块但达到 `blocking/contract/clarification` 时生成“未归属”影响。
+6. 无明确模块但达到 `blocking/contract/clarification` 时生成“未归属”影响；
+7. 示例/旧导入模块不参与影响分析；泛化词不再单独构成模块证据，描述匹配至少需要两个强语义词；
+8. 飞书摘要最多展示 6 个模块，其余合并计数，避免单个事件刷屏。
 
 严重度：`blocking > contract > implementation > clarification > informational`。
 
@@ -73,3 +75,4 @@ giteehelper repair approve <repair-id>
 |---|---|---|
 | 2026-09-26 | 完成规则影响、证据链、一跳联调、Stub、Repair Bundle 和审批边界 | 实施阶段 3、4 |
 | 2026-09-27 | 禁止契约组合检查误报为通过，并新增误导运行/旧导入清理 | 联调真实性 |
+| 2026-09-28 | 收紧模块语义匹配并压缩飞书摘要 | 通知降噪 |

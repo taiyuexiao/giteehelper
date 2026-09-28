@@ -16,7 +16,7 @@
 
 ## 上下游依赖
 - 上游：Gitee Push/PR 事件、模块清单、接口契约、依赖关系、测试命令、环境/数据准备能力。
-- 下游：Gitee Check/PR 评论、飞书通知、集成环境编排、修复 Agent、发布候选清单。
+- 下游：飞书通知、GiteeHelper 证据链、集成环境编排、修复 Agent、发布候选清单。
 
 ## 关键接口与运行时信息
 - 概念入口：`on_module_submitted(module_id, commit, readiness)`。
@@ -111,7 +111,7 @@ fixtures:
   → 依次运行：
       静态检查 → 单元测试 → 契约测试 → 最小场景切片测试
   → 生成 IntegrationAttempt 与兼容矩阵
-  → 回写 Gitee Check/PR 评论，并向负责人发飞书卡片
+  → 向负责人发送飞书精简卡片，并在 GiteeHelper 保留证据链
 ```
 
 ### 触发范围控制
@@ -158,7 +158,7 @@ fixtures:
 1. 定义 `ModuleManifest`、契约 ID/版本和 4 个联调状态。
 2. 接收 Gitee PR Ready/合并事件，只处理变更模块的一跳直接依赖。
 3. 对缺失依赖生成简单 HTTP/事件 Stub，运行契约与一个最小场景。
-4. 输出 Gitee Check + 飞书卡片，展示已验证组合、缺失项和下一步。
+4. 输出飞书精简卡片和 GiteeHelper 证据链，展示已验证组合、缺失项和下一步。
 5. 加入“共享场景但无直接依赖”的切片组装，验证第二种对齐方式。
 6. 稳定后再加入版本求解、集成快照、自动修复 PR 和长 E2E 调度。
 

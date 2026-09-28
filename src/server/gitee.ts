@@ -35,15 +35,6 @@ export async function testGiteeConnection() {
   return { ok: true, login: user.login, name: user.name ?? user.login, url: user.html_url };
 }
 
-export async function createPullComment(repo: string, pullNumber: number, body: string) {
-  const [owner, name] = repo.split("/");
-  if (!owner || !name) throw new Error("GITEE_REPO must be owner/repo");
-  return giteeRequest(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pullNumber}/comments`, {
-    method: "POST",
-    body: JSON.stringify({ body })
-  });
-}
-
 export function normalizeGiteeEvent(payload: Record<string, unknown>, eventTypeHeader: string | undefined): EventInput {
   const hookName = String(payload.hook_name ?? "");
   const action = String(payload.action ?? (hookName === "push_hooks" ? "push" : "updated"));

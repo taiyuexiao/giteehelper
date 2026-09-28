@@ -181,7 +181,7 @@ export default function IntegrationsPage() {
         </div>
         <div className="settings-grid">
           <TextField label="Gitee API Base" value={form.giteeApiBase} onChange={(value) => setForm({ ...form, giteeApiBase: value })} placeholder="https://gitee.com/api/v5" hint="支持 Gitee.com、企业版或私有化 API 地址。" />
-          <TextField label="目标仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" hint="用于读取 PR、回写评论和创建修复 PR。" help={<RepoHelp />} />
+          <TextField label="目标仓库" value={form.giteeRepo} onChange={(value) => setForm({ ...form, giteeRepo: value })} placeholder="owner/repository" hint="用于读取 PR 和创建经批准的修复 PR，不回写评论。" help={<RepoHelp />} />
           <TextField label="约定主分支" value={form.giteeDefaultBranch} onChange={(value) => setForm({ ...form, giteeDefaultBranch: value })} placeholder="main" hint="修复 PR 默认以此分支为目标。" />
           <SecretField label="Gitee Private Access Token" value={form.giteeToken} configured={status.settings.giteeTokenConfigured} onChange={(value) => setForm({ ...form, giteeToken: value })} />
           <SecretField label="WebHook Secret" value={form.giteeWebhookSecret} configured={status.settings.giteeWebhookSecretConfigured} onChange={(value) => setForm({ ...form, giteeWebhookSecret: value })} />
