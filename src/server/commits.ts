@@ -214,13 +214,20 @@ export function describeImpacts(impacts: Impact[]) {
         [impact.moduleId]
       )
       : undefined;
+    // 区域影响没有 moduleId，但有 userId —— 通知必须能回答"该找谁"
+    const owner = module?.owner ?? (impact.userId
+      ? queryOne<{ owner: string | null }>(`SELECT display_name AS owner FROM users WHERE id = ?`, [impact.userId])?.owner ?? null
+      : null);
+    const pathEvidence = impact.evidence.filter((item) => item.type === "path" && item.id);
     return {
-      moduleName: module?.name ?? "未归属影响",
-      owner: module?.owner ?? null,
+      moduleName: module?.name ?? (impact.reason.match(/区域「([^」]+)」/)?.[1] ?? "未归属影响"),
+      owner,
       severity: impact.severity,
       reasonLabel: impact.reasonLabel ?? null,
       reasonNature: impact.reasonNature ?? null,
-      reasonAction: impact.reasonAction ?? null
+      reasonAction: impact.reasonAction ?? null,
+      grounded: pathEvidence.length > 0,
+      evidenceHint: pathEvidence.length ? pathEvidence.slice(0, 2).map((item) => item.id).join("、") : null
     };
   });
 }

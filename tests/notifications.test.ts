@@ -82,3 +82,34 @@ test("通用文档词不会把每个模块都拉进来", () => {
     execute(`DELETE FROM modules WHERE id = ?`, [moduleId]);
   }
 });
+
+/**
+ * 通知可信度的底线：靠词面猜出来的影响不能写成结论。
+ * 收到通知的人要能一眼看出哪条有文件依据、哪条只是线索。
+ */
+test("有路径证据的写确定，只有语义匹配的标成线索", () => {
+  const card = buildCommitImpactCard(
+    [{
+      shortSha: "abc12345", summary: "docs(BOSC-0102): 修订指标口径", authorName: "袁毅堂",
+      authorEmail: "yuanyt@bosc.cn", url: "https://gitee.com/x/y/commit/abc12345",
+      branch: "main", committedAt: new Date().toISOString(), linkCount: 1
+    }],
+    [
+      {
+        moduleName: "评分 · 自动评分与重新评分", owner: "袁毅堂", severity: "contract",
+        reasonLabel: "契约字段已改，实现需跟改", reasonAction: "对照契约更新实现",
+        grounded: true, evidenceHint: "docs/rfcs/20260914-scoring-jobs-and-scores.mdx"
+      },
+      {
+        moduleName: "报告 · 指标统计页签", owner: "厉福超", severity: "implementation",
+        reasonLabel: "口径可能不一致", reasonAction: "确认口径",
+        grounded: false, evidenceHint: null
+      }
+    ]
+  );
+  assert.match(card, /1 项有文件路径证据（确定）/, "要给出确定项计数");
+  assert.match(card, /1 项仅语义匹配（线索，请人工判断）/, "要给出线索项计数");
+  assert.match(card, /报告 · 指标统计页签（线索）/, "线索项必须就地标注，不能只在小结里说");
+  assert.match(card, /依据：docs\/rfcs\/20260914-scoring-jobs-and-scores\.mdx/, "有路径依据的要写出具体文件");
+  assert.match(card, /yuanyt@bosc\.cn/, "提交者邮箱是共用账号下区分人的唯一依据");
+});

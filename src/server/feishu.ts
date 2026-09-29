@@ -49,6 +49,14 @@ export interface ImpactLine {
   reasonLabel?: string | null;
   reasonNature?: string | null;
   reasonAction?: string | null;
+  /**
+   * 有路径证据 = 确定；只有语义证据 = 线索。
+   * 这条区分是通知可信度的底线：靠词面猜出来的影响不能写成结论，
+   * 否则收到的人无法判断要不要动手。
+   */
+  grounded?: boolean;
+  /** 命中的具体文件，供收到通知的人复核 */
+  evidenceHint?: string | null;
 }
 
 export interface AffectedPull {
@@ -123,15 +131,19 @@ export function buildCommitImpactCard(
     lines.push("影响：没有命中他人负责的模块。");
   } else {
     const total = people.reduce((sum, person) => sum + person.items.length, 0);
+    const grounded = impacts.filter((item) => item.grounded === true).length;
+    const leads = impacts.length - grounded;
     lines.push(`影响 ${people.length} 人 · ${total} 个工作项${conflicts.length ? `（其中 ${conflicts.length} 项为契约/阻塞级）` : ""}`);
+    lines.push(`依据：${grounded} 项有文件路径证据（确定）${leads ? `，${leads} 项仅语义匹配（线索，请人工判断）` : ""}`);
     for (const person of people.slice(0, maxPeople)) {
       lines.push(`▸ ${person.owner}${person.conflicts ? " ⚠ 需确认" : ""}`);
       for (const item of person.items.slice(0, maxItemsPerPerson)) {
-        lines.push(`   · ${item.moduleName}`);
+        lines.push(`   · ${item.moduleName}${item.grounded === false ? "（线索）" : ""}`);
         // 影响原因要写清楚"为什么"，否则收到的人只知道被点名、不知道要做什么
         if (item.reasonLabel) {
           lines.push(`     原因：${item.reasonLabel}${item.reasonAction ? ` → ${item.reasonAction}` : ""}`);
         }
+        if (item.evidenceHint) lines.push(`     依据：${item.evidenceHint}`);
       }
       if (person.items.length > maxItemsPerPerson) lines.push(`   · 其余 ${person.items.length - maxItemsPerPerson} 项见控制台`);
     }
