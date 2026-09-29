@@ -10,6 +10,7 @@ import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, lis
 import { buildRepoGraph } from "./repograph.js";
 import { getPull, listPulls, pullGraph, pullStats, syncPullRequests } from "./pulls.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "./repohealth.js";
+import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncRfcContracts } from "./rfccontract.js";
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -768,6 +769,30 @@ router.get("/reasons", requireAuth, (_req, res) => {
     natures: NATURE_LABELS as Record<ReasonNature, string>,
     samples: classifyReasons({ files: [], semanticOnly: true })
   });
+});
+
+// 契约归属：RFC meta 反查工作项，比人写的 glob 可靠。这里只读，同步与落库走 admin 接口或 CLI。
+router.get("/repo/rfc-contracts", requireAuth, (_req, res) => {
+  const contracts = listRfcContracts();
+  res.json({
+    contracts: contracts.length,
+    withTasks: contracts.filter((item) => item.workRefs.length > 0).length,
+    coverage: rfcCoverage(),
+    plan: planRfcPatterns().map((item) => ({
+      moduleKey: item.moduleKey, moduleName: item.moduleName, owner: item.owner, rfc: item.slug, added: item.added
+    })),
+    items: contracts
+  });
+});
+
+router.post("/repo/rfc-sync", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const result = await syncRfcContracts();
+    res.json(body.applyPatterns === true ? { ...result, applied: applyRfcPatterns() } : result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "rfc sync failed" });
+  }
 });
 
 router.post("/gitee/sync-pulls", requireAuth, requireAdmin, async (req, res) => {

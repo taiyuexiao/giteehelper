@@ -190,6 +190,8 @@ const SEMANTIC_DF_RATIO = 0.05;
 const SHORT_CJK_TERM = /^[\u3400-\u9fff]{2}$/;
 /** 单条影响最多保留几条路径证据，其余折叠成计数 */
 const EVIDENCE_PATH_LIMIT = 5;
+/** 区域影响最多点名几位负责人，超过只报人数 */
+const AREA_OWNER_LIMIT = 3;
 
 /**
  * 2 字中文词太容易成为长模块名的子串（"部署" ⊂ "底座 · 目标环境重复部署与回退演练"），
@@ -388,18 +390,29 @@ export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOv
   }
 
   for (const [area, bucket] of areaBuckets) {
+    // 收敛成区域影响是为了不刷屏，但不能因此把"该找谁"也丢掉：
+    // 同一区域的工作项常常是同一个人负责（一个 RFC 带多个子任务），这时直接点名。
+    const owners = [...bucket.owners];
+    const ownerText = owners.length === 0
+      ? ""
+      : owners.length <= AREA_OWNER_LIMIT
+        ? `，涉及负责人 ${owners.join("、")}`
+        : `，涉及 ${owners.length} 位负责人`;
     results.push({
       eventId: 0,
       moduleId: null,
       userId: null,
       severity,
       category,
-      reason: `${event.title} 落在区域「${area}」，该区域下有 ${bucket.count} 个工作项共享这条路径模式。`,
+      reason: `${event.title} 落在区域「${area}」，该区域下有 ${bucket.count} 个工作项共享这条路径模式${ownerText}。`,
       evidence: [
         { type: "area", id: area, label: `区域 ${area}` },
+        ...owners.map((owner) => ({ type: "owner", id: owner, label: `区域负责人 ${owner}` })),
         ...(event.url ? [{ type: "event", id: event.sourceId, label: "来源变化", url: event.url }] : [])
       ],
-      nextAction: bucket.count > 1 ? `确认区域内具体工作项（涉及 ${bucket.count} 项）` : "确认区域内具体工作项",
+      nextAction: owners.length === 1
+        ? `${owners[0]}：确认区域内具体工作项（涉及 ${bucket.count} 项）`
+        : bucket.count > 1 ? `确认区域内具体工作项（涉及 ${bucket.count} 项）` : "确认区域内具体工作项",
       status: "open"
     });
   }

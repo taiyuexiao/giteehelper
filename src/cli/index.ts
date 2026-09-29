@@ -9,6 +9,7 @@ import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
 import { pullStats, syncPullRequests } from "../server/pulls.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
+import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
 import type { ContractRef } from "../shared/types.js";
 
@@ -175,6 +176,41 @@ async function main() {
       });
       return 0;
     }
+    case "rfc-sync":
+      printJson(await syncRfcContracts());
+      return 0;
+    case "rfc-coverage": {
+      const coverage = rfcCoverage();
+      printJson({
+        contracts: coverage.contracts,
+        contractsWithTasks: coverage.contractsWithTasks,
+        modulesTotal: coverage.modulesTotal,
+        modulesWithRfc: coverage.modulesWithRfc,
+        modulesWithoutRfc: coverage.modulesWithoutRfc.length,
+        ownerAgreement: `${coverage.ownerAgreement.filter((item) => item.agreed).length}/${coverage.ownerAgreement.length}`,
+        samples: coverage.modulesWithoutRfc.slice(0, 10)
+      });
+      return coverage.modulesWithoutRfc.length ? 1 : 0;
+    }
+    case "rfc-apply": {
+      if (!rfcCoverage().contracts) {
+        console.error("先跑 rfc-sync 拉取 docs/rfcs/meta/*.json");
+        return 1;
+      }
+      const plan = planRfcPatterns();
+      if (args[0] !== "--apply") {
+        printJson({
+          modules: plan.length,
+          patternsToAdd: plan.reduce((sum, item) => sum + item.added.length, 0),
+          samples: plan.slice(0, 8).map((item) => ({
+            module: item.moduleName, owner: item.owner, rfc: item.slug, add: item.added.slice(0, 3), count: item.added.length
+          }))
+        });
+        return 0;
+      }
+      printJson(applyRfcPatterns());
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -213,6 +249,9 @@ Commands:
   giteehelper pattern-fix [--apply] [--include-review]
   giteehelper sync-pulls [--with-comments]
   giteehelper pulls
+  giteehelper rfc-sync
+  giteehelper rfc-coverage
+  giteehelper rfc-apply [--apply]
   giteehelper reanalyze
   giteehelper cleanup misleading-data
   giteehelper status <run-id>

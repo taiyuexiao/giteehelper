@@ -250,6 +250,26 @@ function ensureColumn(table: string, column: string, definition: string) {
 ensureColumn("impacts", "reason_code", "TEXT");
 ensureColumn("commits", "author_email_key", "TEXT");
 
+// 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
+db.exec(`
+CREATE TABLE IF NOT EXISTS rfc_contracts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  level TEXT NOT NULL DEFAULT '',
+  authors_json TEXT NOT NULL DEFAULT '[]',
+  work_refs_json TEXT NOT NULL DEFAULT '[]',
+  doc_patterns_json TEXT NOT NULL DEFAULT '[]',
+  code_patterns_json TEXT NOT NULL DEFAULT '[]',
+  related_json TEXT NOT NULL DEFAULT '[]',
+  task_count INTEGER NOT NULL DEFAULT 0,
+  synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, slug)
+);
+`);
+
 export function queryAll<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {
   return db.prepare(sql).all(...params as never[]) as T[];
 }
