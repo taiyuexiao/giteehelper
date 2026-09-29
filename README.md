@@ -58,6 +58,28 @@ npm run cli -- pattern-fix --apply --include-review   # 连文档侧改写一起
 该命令同时暴露真实缺口：仓库里 `docs/rfcs/*.mdx` 是主要变更面，而模块模式里的英文 slug 与 RFC 文件名并不一一对应，
 剩余文件仍需靠语义匹配——这是「按模式命中归属」的边界，见「当前限制」。
 
+### 契约即代码：从 RFC meta 反查归属
+
+人写的路径模式会腐烂（实测某仓库 142 个模块的模式全部失效），但仓库里的 RFC meta 是活的契约：
+
+```bash
+npm run cli -- rfc-sync                  # 只读拉取 docs/rfcs/meta/*.json
+npm run cli -- rfc-coverage              # 哪些模块有契约背书、哪些没有（无背书返回非零退出码）
+npm run cli -- rfc-apply [--apply]       # 预览/应用反查出来的模式
+npm run cli -- backfill-files [--fetch]  # 把 PR 文件列表补回历史事件（--fetch 才回查 Gitee）
+```
+
+归属关系直接读自契约，不是猜的：
+
+- `tasks[].ref` = `BOSC-0100#T1` → 反查工作项 `work-bosc-0100` → 负责人；
+- meta 文件自身的路径 → RFC 文档三件套（正文 / meta / 附件），这是文档驱动仓库最大的变更面；
+- `authors` → 责任人，可与工作项负责人交叉校验（`rfc-coverage` 给出吻合比例）；
+- `tasks[].scope` 里已经落地到仓库的类名与迁移文件 → 精确代码模式（没落地的不生成死模式，
+  同名类也不生成，交给人工补）；
+- `related` / `requires` → 契约依赖边，是「跨模块语义未对齐」的机器可读来源。
+
+实测效果：事件覆盖率 6% → 38%，且每条模式都能追到某个 RFC 的某个任务。
+
 ### PR 级依赖图与主干前进检测
 
 - 拉取全部 PR 及其文件、提交、评论，建立 PR 级依赖图（谁依赖谁、谁堆叠在谁上面、谁引用了谁的编号）；
@@ -258,6 +280,10 @@ npm run cli -- sync-pulls [--with-comments]   # 拉取 PR、文件、提交与�
 npm run cli -- pulls                          # PR 统计与依赖概览
 npm run cli -- pattern-health                 # 模块路径模式体检（会返回非零退出码表示存在失效模式）
 npm run cli -- pattern-fix [--apply] [--include-review]
+npm run cli -- rfc-sync                       # 只读拉取 RFC meta，反查工作项归属
+npm run cli -- rfc-coverage                   # 契约覆盖缺口清单
+npm run cli -- rfc-apply [--apply]            # 把契约反查出的模式并进模块
+npm run cli -- backfill-files [--fetch]       # 回填历史事件缺失的文件列表
 npm run cli -- reanalyze                      # 用当前规则和路径模式重算历史影响
 ```
 
@@ -331,10 +357,14 @@ npm run cli -- manifest validate
 
 - 单项目、单组织 MVP；
 - 规则驱动的影响分析，不依赖外部大模型，因此「提交处理了什么问题」取决于提交信息本身写得是否清楚；
-- 归属精度的上限取决于**模块路径模式能否命中真实文件**。实测某仓库：修好机械前缀后仍只有约 8% 的变更文件
-  能落到某个模块的模式里，其余靠语义匹配——语义匹配能找人，但说不清「凭什么」。
-  要真正提高精度，需要把模块模式与 RFC/工作项的对应关系建成显式映射（`docs/rfcs/meta/*.json` 里的
-  `depends_on`/`requires`/`affects` 已经是现成的契约边），而不是继续放宽 glob；
+- 归属精度取决于**能不能拿到变更文件**和**模式能不能命中它**。实测某仓库的分步改进：
+  路径证据覆盖的影响 24 → 190 → 554 条，其中最大的一步不是调模式，而是
+  **把 PR 与评论类事件缺失的文件列表补回来**（284 个事件里 207 个没有文件，占全部影响的 60%）；
+- 仍有约 1500 条影响只有语义证据。它们来自「事件带了文件、但文件指向别处，模块是被词面拉进来的」——
+  这类里既有真实的跨模块语义未对齐，也有噪声，**无法自动区分**，所以通知里如实标成「（线索）」，
+  等人工判断，而不是删掉或伪装成结论；
+- 只有 17/142 个模块有 RFC 契约背书（`rfc-coverage` 会列出其余 125 个）。没有契约的模块只能靠语义匹配，
+  精度上限就在这里——要提升得补契约，不是继续放宽 glob；
 - 文档侧模式改写（`docs/modules/<领域>/**` → `docs/rfcs/*<slug>*`）会改变匹配语义，默认不自动应用，
   需人工确认；其中 `*run*` 一类短 slug 有过度匹配风险；
 - 实时性依赖 Gitee WebHook 可达，没有公网回调时只能手动补齐；
