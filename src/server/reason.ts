@@ -91,7 +91,11 @@ export function classifyReasons(context: ReasonContext): ReasonHit[] {
   const contractFiles = files.filter((file) => CONTRACT_RE.test(file));
 
   // —— 1. 契约字段变更（内容型，最高优先）——
-  if (contractFiles.length) {
+  // 但"本模块只有语义证据"时不能套用这条：契约文件不在它的路径里，
+  // 说"逐个核对本模块读写两侧"是替别人下结论。生产上踩过：一次评分 PR 的卡片里，
+  // 15 条影响全部写着"契约字段/类型变更 → 逐个核对读写两侧"，包括底座、实验这些
+  // 只是词面沾边的模块，9 个人一起收到"⚠ 需确认"。
+  if (contractFiles.length && !context.semanticOnly) {
     hits.push({
       code: "contract_field",
       nature: "directive",
@@ -101,7 +105,14 @@ export function classifyReasons(context: ReasonContext): ReasonHit[] {
   }
 
   // —— 2. 语义/口径变更（认知型）——
-  if (context.semanticOnly && !contractFiles.length) {
+  if (context.semanticOnly && contractFiles.length) {
+    hits.push({
+      code: "semantic_caliber",
+      nature: "cognitive",
+      label: "上游契约变了，本模块只是语义相关",
+      action: "先确认本模块是否读写该契约：是则跟改，否则忽略这条"
+    });
+  } else if (context.semanticOnly) {
     hits.push({
       code: "semantic_caliber",
       nature: "cognitive",

@@ -113,3 +113,38 @@ test("有路径证据的写确定，只有语义匹配的标成线索", () => {
   assert.match(card, /依据：docs\/rfcs\/20260914-scoring-jobs-and-scores\.mdx/, "有路径依据的要写出具体文件");
   assert.match(card, /yuanyt@bosc\.cn/, "提交者邮箱是共用账号下区分人的唯一依据");
 });
+
+/**
+ * 踩过的坑（生产真实消息）：PR !309 的一次 update 被写成"提交者 Yuan Yitang"，
+ * 而 Gitee 上显示的是 guxiang 推送、新提交的作者是 LiuChengyan，时间也差了一天。
+ * 根因有两个：`/pulls/{n}/commits` 是新提交在前且会分页，取 at(-1) 拿到的是最老的提交；
+ * 卡片只写"提交者"一个身份，把共用账号和代码作者混在一起。
+ */
+test("卡片区分代码作者与推送账号，时间取真实提交", () => {
+  const card = buildCommitImpactCard(
+    [{
+      shortSha: "d0cd1b4e", summary: "feat(scoring): 建评分发起、评估任务与机器分三张表",
+      authorName: "LiuChengyan", authorEmail: "liuchy@bosc.cn",
+      url: "https://gitee.com/shanghai-bank_1/agent-evaluation-platform/pulls/309",
+      branch: "feat/yuanyt/BOSC-0100-scoring-jobs-and-scores",
+      committedAt: new Date().toISOString(), linkCount: 0,
+      actorLogin: "gux12", actorName: "gavinxgu"
+    }],
+    []
+  );
+  assert.match(card, /提交作者：LiuChengyan <liuchy@bosc\.cn>/, "代码作者要带邮箱（共用账号时靠它区分人）");
+  assert.match(card, /推送账号：gavinxgu \/ gux12（Gitee 账号）/, "按下面板的人也要能看到是谁推的");
+  assert.match(card, /分支 feat\/yuanyt\/BOSC-0100-scoring-jobs-and-scores/, "要写源分支，不能写目标分支 main");
+});
+
+test("PR 提交列表按 head sha 定位，而不是按位置取最后一个", async () => {
+  const { pickHeadCommit } = await import("../src/server/gitee.js");
+  // Gitee 返回顺序：新提交在前
+  const commits = [
+    { sha: "d0cd1b4e63ef", email: "liuchy@bosc.cn", name: "LiuChengyan", message: "newest", date: "2026-09-29T10:00:00+08:00" },
+    { sha: "4598f039aaaa", email: "yuanyt@bosc.cn", name: "Yuan Yitang", message: "oldest", date: "2026-09-28T09:56:22+08:00" }
+  ];
+  assert.equal(pickHeadCommit(commits, "d0cd1b4e63ef7a21fdcf782e8101d43a8f3f5f69")?.name, "LiuChengyan");
+  assert.equal(pickHeadCommit(commits, null)?.name, "LiuChengyan", "没有 head sha 时按时间取最新");
+  assert.equal(pickHeadCommit([...commits].reverse(), null)?.name, "LiuChengyan", "顺序颠倒也要取到最新的");
+});

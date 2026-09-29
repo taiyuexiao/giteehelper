@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { queryOne } from "./db.js";
-import { extractPushCommits, fetchPullRequestCommits, fetchPullRequestFiles, normalizeGiteeEvent } from "./gitee.js";
+import { extractPushCommits, fetchPullRequestCommits, fetchPullRequestFiles, normalizeGiteeEvent, pickHeadCommit } from "./gitee.js";
 import { persistEventAndImpacts, type EventInput } from "./impact.js";
 import { createIntegrationRun } from "./integration.js";
 import {
@@ -107,6 +107,7 @@ export async function ingestGiteeWebhook(
           reasonNature: module.reasonNature ?? null,
           reasonAction: module.reasonAction ?? null
         })));
+        const sender = (payload.sender ?? {}) as Record<string, unknown>;
         commitLines.push({
           shortSha: commit.sha.slice(0, 8),
           summary: analysis.summary,
@@ -115,7 +116,10 @@ export async function ingestGiteeWebhook(
           url: commit.url ?? null,
           branch: commit.branch ?? null,
           committedAt: commit.committedAt ?? null,
-          linkCount: analysis.affectedModules.length
+          linkCount: analysis.affectedModules.length,
+          // 推送账号与代码作者分开：账号可能被多人共用，作者才是写代码的人
+          actorLogin: typeof sender.login === "string" ? sender.login : null,
+          actorName: typeof sender.name === "string" ? sender.name : null
         });
       }
 
@@ -233,7 +237,13 @@ async function enrichPullRequest(event: EventInput, payload: Record<string, unkn
   if (files.length) event.payload = { ...(event.payload ?? {}), files };
 
   const commits = await fetchPullRequestCommits(config.giteeRepo, number as never).catch(() => []);
-  const latest = commits.at(-1);
+  // 用 PR 的 head sha 定位这次真正推进的提交；列表是新提交在前且会分页，不能按位置取
+  const headSha = typeof (pull.head as Record<string, unknown> | undefined)?.sha === "string"
+    ? String((pull.head as Record<string, unknown>).sha)
+    : null;
+  const latest = pickHeadCommit(commits, headSha);
+  const headRef = (pull.head as Record<string, unknown> | undefined)?.ref;
+  const sender = (payload.sender ?? {}) as Record<string, unknown>;
   if (latest) {
     event.payload = {
       ...(event.payload ?? {}),
@@ -243,8 +253,12 @@ async function enrichPullRequest(event: EventInput, payload: Record<string, unkn
         authorName: latest.name ?? event.author,
         authorEmail: latest.email,
         url: event.url ?? null,
-        branch: event.branch ?? null,
+        // PR 的目标分支是 main，但这次推送落在源分支上，写 main 会让人以为直接推了主干
+        branch: typeof headRef === "string" && headRef ? headRef : event.branch ?? null,
         committedAt: latest.date,
+        // Gitee 账号常常是共用的：账号是谁、代码是谁写的，必须分开说
+        actorLogin: typeof sender.login === "string" ? sender.login : null,
+        actorName: typeof sender.name === "string" ? sender.name : null,
         linkCount: 0
       } satisfies CommitLine
     };

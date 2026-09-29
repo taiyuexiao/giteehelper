@@ -32,13 +32,16 @@ function moduleFromReason(reason: string) {
 export interface CommitLine {
   shortSha: string;
   summary: string;
-  /** 提交者身份：多人共用一个 Gitee 账号，因此必须以提交里的邮箱为准 */
+  /** 代码作者身份：多人共用一个 Gitee 账号，因此必须以提交里的邮箱为准 */
   authorName: string;
   authorEmail: string | null;
   url: string | null;
   branch: string | null;
   committedAt: string | null;
   linkCount: number;
+  /** 这次动作是谁按下的（Gitee 账号）。账号可能是共用的，所以和代码作者分开写 */
+  actorLogin?: string | null;
+  actorName?: string | null;
 }
 
 export interface ImpactLine {
@@ -105,13 +108,17 @@ export function buildCommitImpactCard(
   options: { baseUrl?: string; maxPeople?: number; maxItemsPerPerson?: number; affectedPulls?: AffectedPull[] } = {}
 ) {
   const { baseUrl = "", maxPeople = 5, maxItemsPerPerson = 4, affectedPulls = [] } = options;
-  const conflicts = impacts.filter((item) => item.severity === "blocking" || item.severity === "contract");
+  // 只有"有路径证据"的契约/阻塞级才算需要确认的冲突。
+  // 线索本来就没坐实，再挂 ⚠ 会把整张卡片变成噪音（实测一次评分 PR 有 12 条线索一起报警）。
+  const isConflict = (item: ImpactLine) =>
+    (item.severity === "blocking" || item.severity === "contract") && item.grounded !== false;
+  const conflicts = impacts.filter(isConflict);
   const grouped = new Map<string, { owner: string; items: ImpactLine[]; conflicts: number }>();
   for (const item of impacts) {
     const owner = item.owner?.trim() || "未分配负责人";
     const group = grouped.get(owner) ?? { owner, items: [], conflicts: 0 };
     if (!group.items.some((existing) => existing.moduleName === item.moduleName)) group.items.push(item);
-    if (item.severity === "blocking" || item.severity === "contract") group.conflicts += 1;
+    if (isConflict(item)) group.conflicts += 1;
     grouped.set(owner, group);
   }
   const people = [...grouped.values()].sort((a, b) => b.conflicts - a.conflicts || b.items.length - a.items.length);
@@ -119,8 +126,12 @@ export function buildCommitImpactCard(
   const lines: string[] = ["【GiteeHelper】新提交影响"];
   const head = commits[0];
   if (head) {
+    // 代码作者与操作用户是两件事：一个 Gitee 账号可能被多人共用，
+    // 只写账号会让人以为"是他提交的"，只写作者又追不到是谁推的。
     const who = head.authorEmail ? `${head.authorName} <${head.authorEmail}>` : head.authorName;
-    lines.push(`提交者：${who}`);
+    lines.push(`提交作者：${who}`);
+    const actor = head.actorLogin ? `${head.actorName ? `${head.actorName} / ` : ""}${head.actorLogin}（Gitee 账号）` : null;
+    if (actor) lines.push(`推送账号：${actor}`);
     lines.push(`内容：${head.summary}`);
     if (head.url) lines.push(`链接：${head.url}`);
     lines.push(`分支 ${head.branch || "未知"} ｜ ${shortTime(head.committedAt)}`);

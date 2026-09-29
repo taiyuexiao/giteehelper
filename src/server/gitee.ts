@@ -242,6 +242,23 @@ export interface PullCommit {
 }
 
 /** 取 PR 里的提交。用途是拿提交者邮箱——Gitee 账号是多人共用的，账号名没有区分度。 */
+/**
+ * 挑出"这次推送真正落到分支上的那个提交"。
+ *
+ * Gitee 的 `/pulls/{n}/commits` 是**新提交在前**（实测 head sha 在下标 0），
+ * 而列表会分页，取 `at(-1)` 拿到的是最老的那个提交。踩过的坑：PR !309 的一次
+ * update 被写成"提交者 Yuan Yitang"，而实际新提交的作者是另一个人、时间也差了一天。
+ */
+export function pickHeadCommit(commits: PullCommit[], headSha?: string | null): PullCommit | undefined {
+  if (!commits.length) return undefined;
+  if (headSha) {
+    const exact = commits.find((commit) => commit.sha === headSha || commit.sha.startsWith(headSha.slice(0, 8)));
+    if (exact) return exact;
+  }
+  // 拿不到 head sha 就按提交时间取最新，而不是按列表位置猜
+  return [...commits].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))[0];
+}
+
 export async function fetchPullRequestCommits(repo: string, number: string | number): Promise<PullCommit[]> {
   const [owner, name] = splitRepo(repo);
   const rows = await giteeRequest<Array<Record<string, unknown>>>(
