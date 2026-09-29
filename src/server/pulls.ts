@@ -13,6 +13,8 @@ import { giteeRequest } from "./gitee.js";
 
 export interface PullRecord {
   number: number;
+  /** Gitee 内部的数据库 id。评论类 WebHook 只给 noteable_id（就是这个值），不给 PR 编号，靠它反查 */
+  remoteId: number | null;
   title: string;
   body: string;
   state: string;
@@ -51,6 +53,7 @@ function mapPull(row: Record<string, unknown>): PullRecord {
   const user = (row.user ?? {}) as Record<string, unknown>;
   return {
     number: Number(row.number ?? 0),
+    remoteId: Number(row.id ?? 0) || null,
     title: String(row.title ?? ""),
     body: String(row.body ?? ""),
     state: String(row.state ?? "open"),
@@ -89,16 +92,17 @@ export async function fetchPullComments(number: number): Promise<string[]> {
 
 function upsertPull(project: number, pull: PullRecord) {
   execute(
-    `INSERT INTO pull_requests (project_id, number, title, body, state, base_ref, head_ref, head_sha, author_login,
+    `INSERT INTO pull_requests (project_id, number, remote_id, title, body, state, base_ref, head_ref, head_sha, author_login,
        merged_at, created_at, updated_at, files_json, additions, deletions, synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(project_id, number) DO UPDATE SET
+       remote_id = excluded.remote_id,
        title = excluded.title, body = excluded.body, state = excluded.state,
        base_ref = excluded.base_ref, head_ref = excluded.head_ref, head_sha = excluded.head_sha,
        author_login = excluded.author_login, merged_at = excluded.merged_at,
        updated_at = excluded.updated_at, files_json = excluded.files_json,
        additions = excluded.additions, deletions = excluded.deletions, synced_at = datetime('now')`,
-    [project, pull.number, pull.title, pull.body, pull.state, pull.baseRef, pull.headRef, pull.headSha,
+    [project, pull.number, pull.remoteId, pull.title, pull.body, pull.state, pull.baseRef, pull.headRef, pull.headSha,
       pull.authorLogin, pull.mergedAt, pull.createdAt, pull.updatedAt, JSON.stringify(pull.files),
       pull.additions, pull.deletions]
   );
@@ -274,4 +278,58 @@ export function pullsTouchedBy(files: string[]) {
     });
   }
   return impacted.sort((a, b) => b.shared.length - a.shared.length);
+}
+
+/**
+ * 把已经同步下来的 PR 文件列表回填进历史 WebHook 事件。
+ *
+ * 为什么需要：影响分析的路径证据来自事件 payload 里的文件列表，而 PR 与评论类事件的
+ * payload 本身不带文件。实测某仓库 284 个事件里有 207 个（占影响的 60%）没有文件列表，
+ * 于是这些影响只能靠语义猜词——不是模式不好，是**根本没有路径可匹配**。
+ * PR 的文件列表在 `sync-pulls` 时已经落库，因此回填不需要任何额外 API 调用。
+ */
+export function backfillEventFiles(projectId = 1): { scanned: number; filled: number; files: number; unresolved: number } {
+  const pulls = queryAll<{ number: number; remoteId: number | null; filesJson: string }>(
+    `SELECT number, remote_id AS remoteId, files_json AS filesJson FROM pull_requests WHERE project_id = ?`,
+    [projectId]
+  );
+  const byNumber = new Map<number, string[]>();
+  const byRemoteId = new Map<number, string[]>();
+  for (const pull of pulls) {
+    const files = parseJson<string[]>(pull.filesJson, []).filter(Boolean);
+    if (!files.length) continue;
+    byNumber.set(pull.number, files);
+    if (pull.remoteId) byRemoteId.set(pull.remoteId, files);
+  }
+
+  const events = queryAll<{ id: number; payloadJson: string }>(
+    `SELECT id, payload_json AS payloadJson FROM change_events
+     WHERE project_id = ? AND (event_type = 'pull_request' OR event_type = 'note')`,
+    [projectId]
+  );
+  let scanned = 0;
+  let filled = 0;
+  let filesTotal = 0;
+  let unresolved = 0;
+  for (const event of events) {
+    const payload = parseJson<Record<string, unknown>>(event.payloadJson, {});
+    if (Array.isArray(payload.files) && payload.files.length) continue;
+    scanned += 1;
+    const pull = (payload.pull_request ?? {}) as Record<string, unknown>;
+    const number = Number(payload.number ?? payload.iid ?? pull.number ?? 0) || 0;
+    // 评论类事件只给 noteable_id（Gitee 的数据库 id），PR 类事件才给编号
+    const noteableId = Number(payload.noteable_id ?? 0) || 0;
+    const files = byNumber.get(number) ?? byRemoteId.get(noteableId) ?? [];
+    if (!files.length) {
+      unresolved += 1;
+      continue;
+    }
+    execute(`UPDATE change_events SET payload_json = ? WHERE id = ?`, [
+      JSON.stringify({ ...payload, files }),
+      event.id
+    ]);
+    filled += 1;
+    filesTotal += files.length;
+  }
+  return { scanned, filled, files: filesTotal, unresolved };
 }

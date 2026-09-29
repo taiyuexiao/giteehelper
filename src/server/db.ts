@@ -250,6 +250,9 @@ function ensureColumn(table: string, column: string, definition: string) {
 ensureColumn("impacts", "reason_code", "TEXT");
 ensureColumn("commits", "author_email_key", "TEXT");
 
+// 评论类 WebHook 只给 noteable_id（Gitee 数据库 id），要靠它反查 PR 编号
+ensureColumn("pull_requests", "remote_id", "INTEGER");
+
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
 db.exec(`
 CREATE TABLE IF NOT EXISTS rfc_contracts (

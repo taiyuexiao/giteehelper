@@ -7,7 +7,7 @@ import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
-import { pullStats, syncPullRequests } from "../server/pulls.js";
+import { backfillEventFiles, pullStats, syncPullRequests } from "../server/pulls.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
@@ -211,6 +211,11 @@ async function main() {
       printJson(applyRfcPatterns());
       return 0;
     }
+    case "backfill-files": {
+      const result = backfillEventFiles();
+      printJson(result);
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -249,6 +254,7 @@ Commands:
   giteehelper pattern-fix [--apply] [--include-review]
   giteehelper sync-pulls [--with-comments]
   giteehelper pulls
+  giteehelper backfill-files
   giteehelper rfc-sync
   giteehelper rfc-coverage
   giteehelper rfc-apply [--apply]
