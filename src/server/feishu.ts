@@ -42,6 +42,9 @@ export interface CommitLine {
   /** 这次动作是谁按下的（Gitee 账号）。账号可能是共用的，所以和代码作者分开写 */
   actorLogin?: string | null;
   actorName?: string | null;
+  /** PR 事件才有：谁开的这个 PR。与提交作者、推送账号都不同，是找人对齐时的第一联系人 */
+  pullAuthorName?: string | null;
+  pullAuthorLogin?: string | null;
 }
 
 export interface ImpactLine {
@@ -132,6 +135,10 @@ export function buildCommitImpactCard(
     lines.push(`提交作者：${who}`);
     const actor = head.actorLogin ? `${head.actorName ? `${head.actorName} / ` : ""}${head.actorLogin}（Gitee 账号）` : null;
     if (actor) lines.push(`推送账号：${actor}`);
+    // PR 作者往往既不是提交作者也不是推送账号，对齐时要找的是他
+    if (head.pullAuthorName && head.pullAuthorName !== head.authorName) {
+      lines.push(`PR 作者：${head.pullAuthorName}${head.pullAuthorLogin ? `（${head.pullAuthorLogin}）` : ""}`);
+    }
     lines.push(`内容：${head.summary}`);
     if (head.url) lines.push(`链接：${head.url}`);
     lines.push(`分支 ${head.branch || "未知"} ｜ ${shortTime(head.committedAt)}`);

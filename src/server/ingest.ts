@@ -244,6 +244,9 @@ async function enrichPullRequest(event: EventInput, payload: Record<string, unkn
   const latest = pickHeadCommit(commits, headSha);
   const headRef = (pull.head as Record<string, unknown> | undefined)?.ref;
   const sender = (payload.sender ?? {}) as Record<string, unknown>;
+  const pullAuthor = (payload.author ?? {}) as Record<string, unknown>;
+  const projectAuthorName = typeof pullAuthor.name === "string" ? pullAuthor.name : null;
+  const projectAuthorLogin = typeof pullAuthor.login === "string" ? pullAuthor.login : null;
   if (latest) {
     event.payload = {
       ...(event.payload ?? {}),
@@ -256,9 +259,11 @@ async function enrichPullRequest(event: EventInput, payload: Record<string, unkn
         // PR 的目标分支是 main，但这次推送落在源分支上，写 main 会让人以为直接推了主干
         branch: typeof headRef === "string" && headRef ? headRef : event.branch ?? null,
         committedAt: latest.date,
-        // Gitee 账号常常是共用的：账号是谁、代码是谁写的，必须分开说
+        // Gitee 账号常常是共用的：账号是谁、代码是谁写的、PR 是谁开的，必须分开说
         actorLogin: typeof sender.login === "string" ? sender.login : null,
         actorName: typeof sender.name === "string" ? sender.name : null,
+        pullAuthorName: projectAuthorName,
+        pullAuthorLogin: projectAuthorLogin,
         linkCount: 0
       } satisfies CommitLine
     };

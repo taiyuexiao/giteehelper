@@ -128,13 +128,26 @@ test("卡片区分代码作者与推送账号，时间取真实提交", () => {
       url: "https://gitee.com/shanghai-bank_1/agent-evaluation-platform/pulls/309",
       branch: "feat/yuanyt/BOSC-0100-scoring-jobs-and-scores",
       committedAt: new Date().toISOString(), linkCount: 0,
-      actorLogin: "gux12", actorName: "gavinxgu"
+      actorLogin: "gux12", actorName: "gavinxgu",
+      pullAuthorName: "LiuChengyan", pullAuthorLogin: "liu-chengyy"
     }],
     []
   );
   assert.match(card, /提交作者：LiuChengyan <liuchy@bosc\.cn>/, "代码作者要带邮箱（共用账号时靠它区分人）");
   assert.match(card, /推送账号：gavinxgu \/ gux12（Gitee 账号）/, "按下面板的人也要能看到是谁推的");
   assert.match(card, /分支 feat\/yuanyt\/BOSC-0100-scoring-jobs-and-scores/, "要写源分支，不能写目标分支 main");
+});
+
+test("PR 作者与提交作者不同时才额外写一行", () => {
+  const base = {
+    shortSha: "d0cd1b4e", summary: "feat(scoring): 建三张表", authorName: "Gu Xiang", authorEmail: "guxiang@dev.bosc",
+    url: null, branch: "feat/x", committedAt: new Date().toISOString(), linkCount: 0,
+    actorLogin: "gux12", actorName: "gavinxgu"
+  };
+  const same = buildCommitImpactCard([{ ...base, pullAuthorName: "Gu Xiang", pullAuthorLogin: "guxiang" }], []);
+  assert.doesNotMatch(same, /PR 作者：/, "作者相同就不该多一行噪音");
+  const diff = buildCommitImpactCard([{ ...base, pullAuthorName: "LiuChengyan", pullAuthorLogin: "liu-chengyy" }], []);
+  assert.match(diff, /PR 作者：LiuChengyan（liu-chengyy）/, "开 PR 的人是对齐时的第一联系人");
 });
 
 test("PR 提交列表按 head sha 定位，而不是按位置取最后一个", async () => {
