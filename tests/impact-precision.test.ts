@@ -115,4 +115,8 @@ test("共用模式下仍保留路径证据，且无歧义时收敛成一条区�
   const areaLevel = ambiguous.impacts.filter((impact) => impact.moduleId === null && impact.evidence.some((item) => item.type === "area"));
   assert.equal(perModule.length, 0, "共用模式无法定位到具体工作项时不应逐模块产生通知");
   assert.ok(areaLevel.length >= 1, "应收敛成一条区域级影响");
+  assert.ok(
+    areaLevel[0].evidence.some((item) => item.type === "path" && item.id === "src/shared-area/service/Beta.java"),
+    "收敛成区域影响也要留下实际命中的文件，否则收到通知的人无从复核"
+  );
 });

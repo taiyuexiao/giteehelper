@@ -336,7 +336,7 @@ export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOv
   const ambiguityFloor = Math.max(2, Math.ceil(modules.length * SEMANTIC_DF_RATIO));
   const isInformative = (term: string) => (documentFrequency.get(term) ?? 0) <= ambiguityFloor;
 
-  const areaBuckets = new Map<string, { count: number; owners: Set<string> }>();
+  const areaBuckets = new Map<string, { count: number; owners: Set<string>; ownerIds: Map<number, string>; files: Set<string> }>();
 
   for (const module of modules) {
     const match = matches.get(module.id)!;
@@ -352,9 +352,12 @@ export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOv
     const onlyArea = !match.specific;
     if (onlyArea) {
       const area = match.areas[0] ?? "未标注区域";
-      const bucket = areaBuckets.get(area) ?? { count: 0, owners: new Set<string>() };
+      const bucket = areaBuckets.get(area) ?? { count: 0, owners: new Set<string>(), ownerIds: new Map<number, string>(), files: new Set<string>() };
       bucket.count += 1;
       if (module.ownerName) bucket.owners.add(module.ownerName);
+      // 区域影响也要能回答"该找谁"：记下负责人 id 和实际命中的文件
+      if (module.owner_user_id) bucket.ownerIds.set(module.owner_user_id, module.ownerName ?? "");
+      for (const item of evidence) if (item.type === "path" && item.id) bucket.files.add(item.id);
       areaBuckets.set(area, bucket);
       continue;
     }
@@ -390,9 +393,13 @@ export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOv
   }
 
   for (const [area, bucket] of areaBuckets) {
-    // 收敛成区域影响是为了不刷屏，但不能因此把"该找谁"也丢掉：
-    // 同一区域的工作项常常是同一个人负责（一个 RFC 带多个子任务），这时直接点名。
-    const owners = [...bucket.owners];
+    // 收敛成区域影响是为了不刷屏，但不能因此把"该找谁"和"凭什么"也丢掉：
+    // 同一区域的工作项常常是同一个人负责（一个 RFC 带多个子任务），这时直接落到他名下，
+    // 并把实际命中的文件作为路径证据留下；负责人不止一位才退回区域级提醒。
+    const owners = [...new Set(bucket.ownerIds.values())].filter(Boolean);
+    const singleOwner = bucket.ownerIds.size === 1 ? [...bucket.ownerIds.entries()][0] : null;
+    const pathEvidence: Evidence[] = [...bucket.files].slice(0, EVIDENCE_PATH_LIMIT)
+      .map((file) => ({ type: "path", id: file, label: `变更路径 ${file}（区域共用模式 ${area}）` }));
     const ownerText = owners.length === 0
       ? ""
       : owners.length <= AREA_OWNER_LIMIT
@@ -401,18 +408,23 @@ export function analyzeEvent(event: EventInput, projectId = 1, context: ReasonOv
     results.push({
       eventId: 0,
       moduleId: null,
-      userId: null,
+      userId: singleOwner ? singleOwner[0] : null,
       severity,
       category,
-      reason: `${event.title} 落在区域「${area}」，该区域下有 ${bucket.count} 个工作项共享这条路径模式${ownerText}。`,
+      reason: singleOwner
+        ? `${event.title} 落在区域「${area}」，该区域下 ${bucket.count} 个工作项共享这条路径模式，负责人是 ${singleOwner[1]}。`
+        : `${event.title} 落在区域「${area}」，该区域下有 ${bucket.count} 个工作项共享这条路径模式${ownerText}。`,
       evidence: [
         { type: "area", id: area, label: `区域 ${area}` },
+        ...pathEvidence,
         ...owners.map((owner) => ({ type: "owner", id: owner, label: `区域负责人 ${owner}` })),
         ...(event.url ? [{ type: "event", id: event.sourceId, label: "来源变化", url: event.url }] : [])
       ],
-      nextAction: owners.length === 1
-        ? `${owners[0]}：确认区域内具体工作项（涉及 ${bucket.count} 项）`
-        : bucket.count > 1 ? `确认区域内具体工作项（涉及 ${bucket.count} 项）` : "确认区域内具体工作项",
+      nextAction: singleOwner
+        ? `${singleOwner[1]}：确认区域内具体工作项（涉及 ${bucket.count} 项）`
+        : owners.length === 1
+          ? `${owners[0]}：确认区域内具体工作项（涉及 ${bucket.count} 项）`
+          : bucket.count > 1 ? `确认区域内具体工作项（涉及 ${bucket.count} 项）` : "确认区域内具体工作项",
       status: "open"
     });
   }
