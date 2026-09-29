@@ -216,8 +216,11 @@ async function main() {
       return 0;
     }
     case "backfill-files": {
-      const result = backfillEventFiles();
-      printJson(result);
+      // 默认只用库里已有的文件列表；--fetch 才会按需回查 Gitee（只读），并缓存回库
+      printJson(await backfillEventFiles({
+        fetchMissing: args.includes("--fetch"),
+        maxFetches: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || undefined
+      }));
       return 0;
     }
     case "reanalyze":

@@ -288,19 +288,42 @@ export function pullsTouchedBy(files: string[]) {
  * 于是这些影响只能靠语义猜词——不是模式不好，是**根本没有路径可匹配**。
  * PR 的文件列表在 `sync-pulls` 时已经落库，因此回填不需要任何额外 API 调用。
  */
-export function backfillEventFiles(projectId = 1): { scanned: number; filled: number; files: number; unresolved: number } {
-  const pulls = queryAll<{ number: number; remoteId: number | null; filesJson: string }>(
-    `SELECT number, remote_id AS remoteId, files_json AS filesJson FROM pull_requests WHERE project_id = ?`,
+export async function backfillEventFiles(
+  options: { fetchMissing?: boolean; maxFetches?: number } = {},
+  projectId = 1
+): Promise<{ scanned: number; filled: number; files: number; unresolved: number; fetched: number }> {
+  const pulls = queryAll<{ number: number; remoteId: number | null; state: string; filesJson: string }>(
+    `SELECT number, remote_id AS remoteId, state, files_json AS filesJson FROM pull_requests WHERE project_id = ?`,
     [projectId]
   );
   const byNumber = new Map<number, string[]>();
   const byRemoteId = new Map<number, string[]>();
+  const numberByRemoteId = new Map<number, number>();
   for (const pull of pulls) {
+    if (pull.remoteId) numberByRemoteId.set(pull.remoteId, pull.number);
     const files = parseJson<string[]>(pull.filesJson, []).filter(Boolean);
     if (!files.length) continue;
     byNumber.set(pull.number, files);
     if (pull.remoteId) byRemoteId.set(pull.remoteId, files);
   }
+  // 历史上已合入/已关闭的 PR 在同步时不会去拉文件（只有在飞 PR 才需要），
+  // 但要给历史事件补路径证据就得按需回查，并缓存回库避免重复调用。
+  const maxFetches = options.maxFetches ?? 200;
+  let fetched = 0;
+  const loadFiles = async (number: number): Promise<string[]> => {
+    const cached = byNumber.get(number);
+    if (cached) return cached;
+    if (options.fetchMissing !== true || fetched >= maxFetches) return [];
+    fetched += 1;
+    const files = await fetchPullFiles(number).catch(() => [] as string[]);
+    if (!files.length) return [];
+    byNumber.set(number, files);
+    const remoteId = [...numberByRemoteId.entries()].find(([, value]) => value === number)?.[0];
+    if (remoteId) byRemoteId.set(remoteId, files);
+    execute(`UPDATE pull_requests SET files_json = ?, synced_at = datetime('now') WHERE project_id = ? AND number = ?`,
+      [JSON.stringify(files), projectId, number]);
+    return files;
+  };
 
   const events = queryAll<{ id: number; payloadJson: string }>(
     `SELECT id, payload_json AS payloadJson FROM change_events
@@ -319,7 +342,8 @@ export function backfillEventFiles(projectId = 1): { scanned: number; filled: nu
     const number = Number(payload.number ?? payload.iid ?? pull.number ?? 0) || 0;
     // 评论类事件只给 noteable_id（Gitee 的数据库 id），PR 类事件才给编号
     const noteableId = Number(payload.noteable_id ?? 0) || 0;
-    const files = byNumber.get(number) ?? byRemoteId.get(noteableId) ?? [];
+    const resolved = number || numberByRemoteId.get(noteableId) || 0;
+    const files = resolved ? await loadFiles(resolved) : [];
     if (!files.length) {
       unresolved += 1;
       continue;
@@ -331,5 +355,5 @@ export function backfillEventFiles(projectId = 1): { scanned: number; filled: nu
     filled += 1;
     filesTotal += files.length;
   }
-  return { scanned, filled, files: filesTotal, unresolved };
+  return { scanned, filled, files: filesTotal, unresolved, fetched };
 }
