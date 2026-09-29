@@ -144,7 +144,11 @@ async function main() {
       return 0;
     }
     case "sync-pulls":
-      printJson(await syncPullRequests({ withComments: args[0] === "--with-comments" }));
+      // 文件列表是路径归属的依据，默认一起拉；只想要 PR 元数据时显式加 --no-files
+      printJson(await syncPullRequests({
+        withComments: args.includes("--with-comments"),
+        withFiles: !args.includes("--no-files")
+      }));
       return 0;
     case "pulls":
       printJson(pullStats());
