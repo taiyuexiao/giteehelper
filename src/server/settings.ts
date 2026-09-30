@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "./config.js";
+import { config, DEFAULT_SESSION_SECRET } from "./config.js";
 import { execute, queryAll, queryOne } from "./db.js";
 
 type SecretBox = { iv: string; tag: string; ciphertext: string };
@@ -41,10 +41,25 @@ type RuntimeKey = keyof typeof runtimeSettings;
 const secretKeys: RuntimeKey[] = ["giteeToken", "giteeWebhookSecret", "feishuWebhookUrl"];
 
 export function loadRuntimeSettings() {
+  const secretRows = queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM settings WHERE is_secret = 1`)?.count ?? 0;
+  if (secretRows > 0 && config.sessionSecret === DEFAULT_SESSION_SECRET) {
+    console.warn("[giteehelper] Secret Store 使用默认 SESSION_SECRET 派生加密密钥，拿到数据库文件即可解密已保存的凭据；请配置 SESSION_SECRET 并到「接入设置」重新保存。");
+  }
   for (const [key, envKey] of Object.entries(runtimeSettings)) {
     const row = queryOne<{ value: string; is_secret: number }>(`SELECT value, is_secret FROM settings WHERE key = ?`, [key]);
     if (!row) continue;
-    const value = row.is_secret ? decryptSecret(row.value) : row.value;
+    let value: string;
+    if (row.is_secret) {
+      try {
+        value = decryptSecret(row.value);
+      } catch {
+        // SESSION_SECRET 变更后旧密文解不开：跳过该项回退到 .env，不能让整个服务启动失败
+        console.warn(`[giteehelper] 配置 ${key} 解密失败（SESSION_SECRET 可能已变更），请到「接入设置」重新保存该项。`);
+        continue;
+      }
+    } else {
+      value = row.value;
+    }
     (config as Record<string, unknown>)[key === "giteeApiBase" ? "giteeApiBase" : key] = value;
     if (envKey === "GITEE_API_BASE") config.giteeApiBase = value.replace(/\/$/, "");
     else if (key === "giteeToken") config.giteeToken = value;

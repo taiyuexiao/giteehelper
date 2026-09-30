@@ -103,3 +103,41 @@ test("未匹配模块的提交被统计为未归属", () => {
   execute(`DELETE FROM commits WHERE id = ?`, [result.commitId]);
   execute(`DELETE FROM change_events WHERE id = ?`, [result.eventId]);
 });
+
+/**
+ * 通知可信度分档必须覆盖 push 路径（最高频路径）：
+ * 有路径证据的影响写 grounded=true 并给出文件，纯语义命中是 grounded=false 的线索。
+ * 曾经只有非 push 事件走 describeImpacts 拿到分档，push 通知恒显示"0 项确定"。
+ */
+test("提交影响自带依据分档：路径证据=确定，纯语义=线索", () => {
+  const projectId = queryOne<{ id: number }>(`SELECT id FROM projects ORDER BY id LIMIT 1`)!.id;
+  const semanticModule = execute(
+    `INSERT INTO modules (project_id, module_key, name, status, paths_json, scenarios_json, provides_json, requires_json, description)
+     VALUES (?, 'grounded-check-module', '库存对账工作台', 'not_started', '[]', '[]', '[]', '[]', '')`,
+    [projectId]
+  );
+  try {
+    const grounded = ingestCommit({
+      sha: `grounded-${Date.now()}`,
+      message: "docs: 修订验收规范",
+      branch: "main",
+      files: [{ path: "docs/specs/spec.md" }]
+    });
+    const groundedHit = grounded.analysis?.affectedModules.find((module) => module.grounded === true);
+    assert.ok(groundedHit, "命中路径模式的影响必须是确定项");
+    assert.ok(groundedHit.evidenceHint?.includes("docs/specs/spec.md"), "确定项要能给出具体文件");
+
+    const semantic = ingestCommit({
+      sha: `semantic-${Date.now()}`,
+      message: "chore: 库存对账工作台的临时说明",
+      branch: "main",
+      files: []
+    });
+    const lead = semantic.analysis?.affectedModules.find((module) => module.name === "库存对账工作台");
+    assert.ok(lead, "语义命中的模块应出现在影响里");
+    assert.equal(lead.grounded, false, "没有路径证据就是线索，不能伪装成确定");
+    assert.equal(lead.evidenceHint ?? null, null);
+  } finally {
+    execute(`DELETE FROM modules WHERE id = ?`, [Number(semanticModule.lastInsertRowid)]);
+  }
+});

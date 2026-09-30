@@ -24,16 +24,36 @@ test("提交影响卡片按负责人分组，并给出提交者邮箱与链接",
       { moduleName: "题库 · 删除评测集", owner: "刘成彦", severity: "implementation" },
       { moduleName: "底座 · 数据库换成 MySQL 8", owner: "顾乡", severity: "contract" }
     ],
-    { baseUrl: "http://host/giteehelper" }
+    { eventType: "pull_request", summary: "修复了公共 HTTP 客户端的缓存穿透问题，并发回源改为单飞。" }
   );
+  assert.ok(card.startsWith("【GiteeHelper】新提交影响 - 「提交PR」"), "首行要标注事件类型");
   assert.ok(card.includes("liuchy@bosc.cn"), "必须给出提交者邮箱（共用账号时账号名没有区分度）");
   assert.ok(card.includes("https://gitee.com/x/y/commit/abc12345"), "必须给出可点击的提交链接");
+  assert.ok(card.includes("概要：修复了公共 HTTP 客户端的缓存穿透问题"), "大模型概要要进卡片");
   assert.ok(card.includes("影响 2 人 · 3 个工作项"));
   assert.ok(card.includes("▸ 刘成彦") && card.includes("▸ 顾乡"), "按人分组");
   assert.ok(card.includes("题库 · 评测集本体"), "列出具体工作项");
   assert.ok(card.includes("⚠"), "契约级要标出来");
-  assert.ok(card.includes("http://host/giteehelper/repo"), "给出控制台链接");
+  // 分割线把头部（这次动作）与影响清单隔开
+  const divider = card.indexOf("-------");
+  const impacts = card.indexOf("影响 2 人");
+  assert.ok(divider > -1 && divider < impacts, "影响清单前要有分割线");
+  assert.doesNotMatch(card, /控制台：/, "不再输出控制台链接");
   assert.ok(card.length < 1400);
+});
+
+test("事件类型标注：push 是提交Commit，评论是评论，缺省不标注", () => {
+  const base = { shortSha: "a", summary: "chore: 调整", authorName: "X", authorEmail: "x@y.z", url: null, branch: "main", committedAt: null, linkCount: 0 };
+  const push = buildCommitImpactCard([{ ...base }], [], { eventType: "push" });
+  assert.ok(push.includes("「提交Commit」"));
+  const note = buildCommitImpactCard([{ ...base }], [], { eventType: "note" });
+  assert.ok(note.includes("「评论」"));
+  const unknown = buildCommitImpactCard([{ ...base }], [], { eventType: "something_else" });
+  assert.ok(unknown.includes("「其他」"));
+  const plain = buildCommitImpactCard([{ ...base }], []);
+  assert.ok(plain.startsWith("【GiteeHelper】新提交影响\n"), "未传类型时保持原首行");
+  // 概要缺失时不出现概要行
+  assert.doesNotMatch(push, /概要：/);
 });
 
 test("没有命中任何模块时也要明确说明", () => {
@@ -160,4 +180,34 @@ test("PR 提交列表按 head sha 定位，而不是按位置取最后一个", a
   assert.equal(pickHeadCommit(commits, "d0cd1b4e63ef7a21fdcf782e8101d43a8f3f5f69")?.name, "LiuChengyan");
   assert.equal(pickHeadCommit(commits, null)?.name, "LiuChengyan", "没有 head sha 时按时间取最新");
   assert.equal(pickHeadCommit([...commits].reverse(), null)?.name, "LiuChengyan", "顺序颠倒也要取到最新的");
+});
+
+test("未配置大模型时概要回退为空，提示词包含标题/描述/文件并截断", async () => {
+  const { summarizeActivity, buildSummarizePrompt } = await import("../src/server/summarize.js");
+  const { config } = await import("../src/server/config.js");
+  const savedKey = config.llmApiKey;
+  const savedBase = config.llmApiBase;
+  config.llmApiKey = "";
+  config.llmApiBase = "";
+  try {
+    // 未配置：直接回退 null，卡片不写概要行——概要永远不能挂掉通知
+    assert.equal(await summarizeActivity({ eventType: "push", title: "feat: 新增能力" }), null);
+  } finally {
+    config.llmApiKey = savedKey;
+    config.llmApiBase = savedBase;
+  }
+
+  const prompt = buildSummarizePrompt({
+    eventType: "pull_request",
+    title: "T".repeat(500),
+    body: "B".repeat(3000),
+    files: Array.from({ length: 50 }, (_, index) => `file-${index}.ts`),
+    commitSubjects: Array.from({ length: 20 }, (_, index) => `commit-${index}`)
+  });
+  assert.ok(prompt.includes("标题："), "包含标题");
+  assert.ok(prompt.includes("file-29.ts"), "文件保留前 30 条");
+  assert.doesNotMatch(prompt, /file-30\.ts/, "文件超过 30 条的部分要截断");
+  assert.ok(prompt.includes("commit-9"), "提交主题保留前 10 条");
+  assert.doesNotMatch(prompt, /commit-10\b/, "提交主题超过 10 条的部分要截断");
+  assert.ok(prompt.length < 6000, "整体长度要有界，不能把长正文原样塞给模型");
 });

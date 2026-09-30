@@ -52,6 +52,22 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、仓库全�
 
 ## Bug 与问题记录
 
+### BUG-010 「补齐提交」按钮没有接同步接口（2026-09-29，已解决）
+- 错误行为：WHEN 管理员在 `/repo` 点击「补齐提交」THEN 按钮只重新拉取 `/api/repo/graph` 图数据，从未调用 `POST /api/gitee/sync`——没有公网回调的时段永远等不到新提交，按钮是空操作。
+- 期望行为：WHEN 点击「补齐提交」THEN 系统 SHALL 调用 `POST /api/gitee/sync`（`only=commits`）回填最近提交后再刷新图数据。
+- 不可破坏的行为：WHEN 点击普通「刷新」按钮 THEN 行为 SHALL CONTINUE TO 只重拉图数据，不触发 Gitee API 调用。
+- 根因：前端没有任何地方调用 `/gitee/sync`（grep 可证），文档承诺的「手动补齐」实际只有 CLI 能做到。
+- 解决方式：新增 `syncCommits()` 回调接通接口；对非 admin 角色按钮本就隐藏，权限不变。
+- 验证方式：typecheck 通过；接口为既有 admin 端点，手动验证按钮转圈后提交数增长。
+
+### BUG-011 模块页对非 admin 角色永远停在加载态（2026-09-29，已解决）
+- 错误行为：WHEN developer/reviewer/observer 打开「模块与契约」THEN `Promise.all` 里的 `GET /api/users`（admin-only）整体 reject，模块列表永远 null、界面停在「加载中…」加一条错误。
+- 期望行为：WHEN 非 admin 打开模块页 THEN 模块与契约列表 SHALL 正常显示；负责人下拉仅可编辑角色需要，拿不到时降级为空。
+- 不可破坏的行为：WHEN admin 打开模块页 THEN SHALL CONTINUE TO 加载用户清单填充负责人下拉。
+- 根因：`/users` 接口在 BUG-005 补齐角色校验后变 admin-only，但 ModulesPage 的请求没有跟着拆分。
+- 解决方式：`/users` 从 `Promise.all` 拆出，仅 `canEdit` 时请求且失败静默降级。
+- 验证方式：typecheck 通过；权限矩阵由服务端保证，observer 只读路径不受影响。
+
 ### BUG-003 帮助浮窗被容器裁剪且层级不足（2026-09-27，已解决）
 - 错误行为：WHEN 目标仓库字段打开帮助浮窗 THEN 浮窗被接入设置卡片/页面边界截断，无法覆盖其他组件。
 - 期望行为：WHEN 帮助浮窗打开 THEN 系统 SHALL 将浮窗渲染为 fixed 顶层浮层，并根据触发器和视口自动调整位置。
@@ -127,3 +143,4 @@ React/Vite Web 控制台提供完整管理面：登录、待处理、仓库全�
 | 2026-09-28 | 修复错误态不可达、下载丢失鉴权、深链失效、无用导入与死 CSS、`label.full` 笔误 | BUG-004 ~ BUG-007 |
 | 2026-09-28 | `/repo` 视觉重做：两级层次图、负责人玻璃球分区、按投影取景；侧栏与画布等高并内部滚动；接入状态改用紧凑键值列表 | BUG-008、BUG-009 |
 | 2026-09-28 | `/repo` 增加 DOM 标签层、缩放/全屏控件、三级下钻与面包屑、未读与跳到最新 | 仓库全景可读性 |
+| 2026-09-29 | 「补齐提交」接通 `/api/gitee/sync`；模块页对非 admin 正常加载（`/users` 拆分请求）；关系图搜索不再整图重挂载（key 移除 query） | BUG-010、BUG-011 |

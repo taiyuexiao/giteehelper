@@ -3,18 +3,21 @@ import { config } from "./config.js";
 import type { CommitFile, CommitInput } from "./commits.js";
 import type { EventInput } from "./impact.js";
 
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 export function verifyGiteeSignature(secret: string, token: string | undefined, timestamp: string | undefined): boolean {
   if (!secret || !token) return false;
-  if (token === secret) return true;
+  // 明文 Secret 分支同样常量时间比较，否则计时侧信道会泄漏比较进度
+  if (safeEqual(token, secret)) return true;
   if (!timestamp) return false;
   const expected = crypto.createHmac("sha256", secret).update(`${timestamp}\n${secret}`).digest("base64");
   const normalizedExpected = encodeURIComponent(expected);
   const candidates = [expected, normalizedExpected];
-  return candidates.some((candidate) => {
-    const left = Buffer.from(candidate);
-    const right = Buffer.from(token);
-    return left.length === right.length && crypto.timingSafeEqual(left, right);
-  });
+  return candidates.some((candidate) => safeEqual(candidate, token));
 }
 
 export async function giteeRequest<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
@@ -88,7 +91,11 @@ function eventSourceId(
   }
   const pushId = payload.after ?? pull.id ?? (payload.head_commit as Record<string, unknown> | undefined)?.id;
   if (pushId !== undefined) return String(pushId);
-  if (payload.hook_id !== undefined) return `hook-${String(payload.hook_id)}-${crypto.randomUUID().slice(0, 8)}`;
+  if (payload.hook_id !== undefined) {
+    // 未知事件类型也没有实体 id：按 payload 内容哈希生成，同一次投递的重发才能被唯一约束挡住
+    const digest = crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
+    return `hook-${String(payload.hook_id)}-${digest}`;
+  }
   return crypto.randomUUID();
 }
 
@@ -259,12 +266,23 @@ export function pickHeadCommit(commits: PullCommit[], headSha?: string | null): 
   return [...commits].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))[0];
 }
 
-export async function fetchPullRequestCommits(repo: string, number: string | number): Promise<PullCommit[]> {
+export async function fetchPullRequestCommits(
+  repo: string,
+  number: string | number,
+  options: { perPage?: number; maxPages?: number } = {}
+): Promise<PullCommit[]> {
   const [owner, name] = splitRepo(repo);
-  const rows = await giteeRequest<Array<Record<string, unknown>>>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${encodeURIComponent(String(number))}/commits`
-  );
-  if (!Array.isArray(rows)) return [];
+  const perPage = options.perPage ?? 20;
+  const maxPages = Math.max(1, options.maxPages ?? 1);
+  const rows: Array<Record<string, unknown>> = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const batch = await giteeRequest<Array<Record<string, unknown>>>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${encodeURIComponent(String(number))}/commits?per_page=${perPage}&page=${page}`
+    );
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    rows.push(...batch);
+    if (batch.length < perPage) break;
+  }
   return rows.map((row) => {
     const commit = (row.commit ?? {}) as Record<string, unknown>;
     const author = (commit.author ?? {}) as Record<string, unknown>;

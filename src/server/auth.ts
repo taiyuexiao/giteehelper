@@ -19,7 +19,12 @@ export function verifyPassword(password: string, hash: string, salt: string): bo
 
 export function createSession(userId: number): string {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { userId, expiresAt: Date.now() + 12 * 60 * 60 * 1000 });
+  const now = Date.now();
+  // 顺手清掉过期会话，避免长期运行下 Map 无限增长
+  for (const [key, session] of sessions) {
+    if (session.expiresAt < now) sessions.delete(key);
+  }
+  sessions.set(token, { userId, expiresAt: now + 12 * 60 * 60 * 1000 });
   return token;
 }
 

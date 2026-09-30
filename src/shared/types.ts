@@ -188,7 +188,7 @@ export interface RepoCommitMeta {
   conflict: boolean;
   pullNumber: number | null;
   pullTitle: string | null;
-  affectedModules: Array<{ id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string }>;
+  affectedModules: Array<{ id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string; grounded?: boolean; evidenceHint?: string | null }>;
   files: Array<{ path: string; additions?: number; deletions?: number }>;
 }
 

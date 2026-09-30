@@ -158,7 +158,7 @@ test("通知里给出影响原因与受影响在飞 PR", () => {
       moduleName: "题库 · 评测集本体", owner: "刘成彦", severity: "contract",
       reasonLabel: "契约字段/类型变更", reasonNature: "directive", reasonAction: "按变更清单逐个跟改调用方、实现与断言"
     }],
-    { baseUrl: "http://host/giteehelper", affectedPulls: [{ number: 305, title: "评测集生命周期", author: "liuchy", shared: ["docs/a.md"] }] }
+    { affectedPulls: [{ number: 305, title: "评测集生命周期", author: "liuchy", shared: ["docs/a.md"] }] }
   );
   assert.ok(card.includes("原因：契约字段/类型变更"), "必须写清影响原因");
   assert.ok(card.includes("按变更清单逐个跟改"), "必须给出建议动作");

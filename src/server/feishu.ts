@@ -1,34 +1,6 @@
 import { config } from "./config.js";
 import { audit } from "./db.js";
 
-type ImpactSummary = {
-  reason: string;
-  nextAction: string;
-  severity: string;
-  owner?: string | null;
-  moduleName?: string | null;
-};
-
-const severityLabels: Record<string, string> = {
-  blocking: "阻塞",
-  contract: "契约",
-  implementation: "实现",
-  clarification: "待澄清",
-  informational: "提示"
-};
-
-const severityOrder = ["blocking", "contract", "implementation", "clarification", "informational"];
-
-function isOperationalImpact(impact: ImpactSummary) {
-  const text = `${impact.reason}${impact.moduleName ?? ""}`;
-  return !text.includes("[示例]") && !text.includes("[旧导入]");
-}
-
-function moduleFromReason(reason: string) {
-  const match = reason.match(/影响模块「([^」]+)」/);
-  return match?.[1] ?? (reason.includes("全局影响") ? "全局影响" : "未归属影响");
-}
-
 export interface CommitLine {
   shortSha: string;
   summary: string;
@@ -98,19 +70,29 @@ function shortTime(value: string | null) {
   return `${Math.round(minutes / 1440)} 天前`;
 }
 
+/** 首行的事件类型标注：让收到消息的人不用点开就知道这是提交、PR 还是评论 */
+const EVENT_KIND_LABELS: Record<string, string> = {
+  push: "提交Commit",
+  commit: "提交Commit",
+  pull_request: "提交PR",
+  note: "评论",
+  issue: "议题"
+};
+
 /**
  * 新提交影响卡片。
- * 格式目标：一眼看出「谁提交的、这次提交影响了谁、影响他的哪一部分」。
+ * 格式目标：一眼看出「这次是什么动作、谁提交的、影响了谁、影响他的哪一部分」。
+ * - 首行标注事件类型（提交Commit / 提交PR / 评论 / 议题）
  * - 提交者按提交里的邮箱显示（多人共用 Gitee 账号，账号名没有区分度）
- * - 影响项按负责人分组，而不是铺一个几十条的工作项清单
- * - 给出可直接点击的提交链接与控制台链接
+ * - 概要为大模型生成（未配置或失败时整行省略，不影响卡片）
+ * - 分割线把「这次动作」与「影响清单」隔开；影响项按负责人分组
  */
 export function buildCommitImpactCard(
   commits: CommitLine[],
   impacts: ImpactLine[],
-  options: { baseUrl?: string; maxPeople?: number; maxItemsPerPerson?: number; affectedPulls?: AffectedPull[] } = {}
+  options: { eventType?: string; summary?: string | null; maxPeople?: number; maxItemsPerPerson?: number; affectedPulls?: AffectedPull[] } = {}
 ) {
-  const { baseUrl = "", maxPeople = 5, maxItemsPerPerson = 4, affectedPulls = [] } = options;
+  const { eventType = "", summary, maxPeople = 5, maxItemsPerPerson = 4, affectedPulls = [] } = options;
   // 只有"有路径证据"的契约/阻塞级才算需要确认的冲突。
   // 线索本来就没坐实，再挂 ⚠ 会把整张卡片变成噪音（实测一次评分 PR 有 12 条线索一起报警）。
   const isConflict = (item: ImpactLine) =>
@@ -126,7 +108,8 @@ export function buildCommitImpactCard(
   }
   const people = [...grouped.values()].sort((a, b) => b.conflicts - a.conflicts || b.items.length - a.items.length);
 
-  const lines: string[] = ["【GiteeHelper】新提交影响"];
+  const kind = eventType ? (EVENT_KIND_LABELS[eventType] ?? "其他") : undefined;
+  const lines: string[] = [`【GiteeHelper】新提交影响${kind ? ` - 「${kind}」` : ""}`];
   const head = commits[0];
   if (head) {
     // 代码作者与操作用户是两件事：一个 Gitee 账号可能被多人共用，
@@ -142,9 +125,11 @@ export function buildCommitImpactCard(
     lines.push(`内容：${head.summary}`);
     if (head.url) lines.push(`链接：${head.url}`);
     lines.push(`分支 ${head.branch || "未知"} ｜ ${shortTime(head.committedAt)}`);
+    if (summary) lines.push(`概要：${summary}`);
     if (commits.length > 1) lines.push(`本次推送共 ${commits.length} 个提交，以下为第 1 个，其余见控制台。`);
   }
 
+  lines.push("-------");
   if (people.length === 0) {
     lines.push("影响：没有命中他人负责的模块。");
   } else {
@@ -180,7 +165,6 @@ export function buildCommitImpactCard(
     if (affectedPulls.length > 4) lines.push(`   其余 ${affectedPulls.length - 4} 个见控制台`);
     lines.push("   这些 PR 需要合并同步后重跑门禁。");
   }
-  if (baseUrl) lines.push(`控制台：${baseUrl}/repo`);
   const text = lines.join("\n");
   return text.length > 1400 ? `${text.slice(0, 1380)}…` : text;
 }

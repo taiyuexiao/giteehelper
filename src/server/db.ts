@@ -248,7 +248,6 @@ function ensureColumn(table: string, column: string, definition: string) {
 
 // 影响原因：规则判定出来的"为什么这个模块会受影响"，通知里要显示
 ensureColumn("impacts", "reason_code", "TEXT");
-ensureColumn("commits", "author_email_key", "TEXT");
 
 // 评论类 WebHook 只给 noteable_id（Gitee 数据库 id），要靠它反查 PR 编号
 ensureColumn("pull_requests", "remote_id", "INTEGER");

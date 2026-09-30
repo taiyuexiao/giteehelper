@@ -8,10 +8,11 @@ import {
 } from "./commits.js";
 import { buildCommitImpactCard, sendFeishuText, type CommitLine, type ImpactLine } from "./feishu.js";
 import { mineReferences, pullsTouchedBy } from "./pulls.js";
+import { summarizeActivity } from "./summarize.js";
 import { queryAll as queryAllRows } from "./db.js";
 
-/** 一次 Push 里最多自动创建多少条联调记录，避免刷屏 */
-const MAX_RUNS_PER_PUSH = 5;
+/** 单个事件最多自动创建多少条联调记录，避免一条 PR 影响几十个模块时刷屏 */
+const MAX_RUNS_PER_EVENT = 5;
 
 export interface IngestResult {
   deliveryId: number;
@@ -41,10 +42,6 @@ function collectEventFiles(event: EventInput): string[] {
   add(payload.files);
   add(payload.paths);
   return [...files];
-}
-
-function consoleLink(path: string) {
-  return config.publicBaseUrl ? `${config.publicBaseUrl}${path}` : "";
 }
 
 /**
@@ -105,7 +102,10 @@ export async function ingestGiteeWebhook(
           severity: module.severity,
           reasonLabel: module.reasonLabel ?? null,
           reasonNature: module.reasonNature ?? null,
-          reasonAction: module.reasonAction ?? null
+          reasonAction: module.reasonAction ?? null,
+          // 依据分档必须覆盖 push 路径：有路径证据写"确定"并列出文件，只有语义就地标"线索"
+          grounded: module.grounded,
+          evidenceHint: module.evidenceHint ?? null
         })));
         const sender = (payload.sender ?? {}) as Record<string, unknown>;
         commitLines.push({
@@ -123,7 +123,7 @@ export async function ingestGiteeWebhook(
         });
       }
 
-      for (const moduleId of [...conflictedModules].slice(0, MAX_RUNS_PER_PUSH)) {
+      for (const moduleId of [...conflictedModules].slice(0, MAX_RUNS_PER_EVENT)) {
         const moduleKey = moduleKeyOf(moduleId);
         if (moduleKey) runs.push((await createIntegrationRun(moduleKey, eventId)).id);
       }
@@ -135,8 +135,17 @@ export async function ingestGiteeWebhook(
 
       // 每一次推送都广播：群里能持续看到"谁提交了什么、影响了谁"
       if (commitLines.length > 0) {
+        // 概要由大模型生成（未配置时为 null，卡片省略概要行）；失败/超时同样回退，不阻塞通知
+        const summary = await summarizeActivity({
+          eventType: "push",
+          title: commitLines[0]?.summary ?? event.title,
+          commitSubjects: commitLines.map((line) => line.summary),
+          files: pushedFiles,
+          branch: pushed[0]?.branch ?? null
+        });
         await sendFeishuText(buildCommitImpactCard(commitLines, lines, {
-          baseUrl: config.publicBaseUrl,
+          eventType: "push",
+          summary,
           affectedPulls
         }));
         notified = true;
@@ -186,9 +195,13 @@ export async function ingestGiteeWebhook(
     eventId = persisted.eventId;
     impacts = persisted.impacts.length;
     conflicts = persisted.impacts.filter((impact) => isConflict(impact.severity)).length;
+    // 与 Push 路径同样的上限：一条 PR 影响几十个模块时不能把联调列表冲成单事件刷屏
+    const impactedModuleIds = new Set<number>();
     for (const impact of persisted.impacts) {
-      if (!impact.moduleId) continue;
-      const moduleKey = moduleKeyOf(impact.moduleId);
+      if (impact.moduleId) impactedModuleIds.add(impact.moduleId);
+    }
+    for (const moduleId of [...impactedModuleIds].slice(0, MAX_RUNS_PER_EVENT)) {
+      const moduleKey = moduleKeyOf(moduleId);
       if (moduleKey) runs.push((await createIntegrationRun(moduleKey, eventId)).id);
     }
 
@@ -204,7 +217,19 @@ export async function ingestGiteeWebhook(
         committedAt: null,
         linkCount: persisted.impacts.length
       };
-      await sendFeishuText(buildCommitImpactCard([head], describeImpacts(persisted.impacts), { baseUrl: config.publicBaseUrl }));
+      const summary = await summarizeActivity({
+        eventType: event.eventType,
+        title: event.title,
+        body: typeof (event.payload as Record<string, unknown> | undefined)?.body === "string"
+          ? String((event.payload as Record<string, unknown>).body)
+          : undefined,
+        files: eventFiles,
+        branch: event.branch ?? null
+      });
+      await sendFeishuText(buildCommitImpactCard([head], describeImpacts(persisted.impacts), {
+        eventType: event.eventType,
+        summary
+      }));
       notified = true;
     }
 

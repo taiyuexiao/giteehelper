@@ -8,7 +8,7 @@ import { analyzeEvent, persistEventAndImpacts, type EventInput } from "./impact.
 import { createIntegrationRun, getRun } from "./integration.js";
 import { commitStats, findCommitBySha, getCommit, ingestCommit, listCommits, listWebhookDeliveries, reanalyzeAll, recordWebhookDelivery } from "./commits.js";
 import { buildRepoGraph } from "./repograph.js";
-import { getPull, listPulls, pullGraph, pullStats, syncPullRequests } from "./pulls.js";
+import { backfillPullHeads, getPull, listPulls, pullGraph, pullStats, syncPullRequests } from "./pulls.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "./repohealth.js";
 import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncRfcContracts } from "./rfccontract.js";
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
@@ -361,6 +361,26 @@ router.post("/users", requireAuth, requireAdmin, (req, res) => {
 router.patch("/users/:id", requireAuth, requireAdmin, (req, res) => {
   const body = req.body as Record<string, unknown>;
   const id = Number(req.params.id);
+  const existing = queryOne<{ id: number; role: Role }>(`SELECT id, role FROM users WHERE id = ?`, [id]);
+  if (!existing) {
+    res.status(404).json({ error: "user not found" });
+    return;
+  }
+  const allowed: Role[] = ["admin", "maintainer", "reviewer", "developer", "observer"];
+  if (body.role !== undefined && !allowed.includes(body.role as Role)) {
+    res.status(400).json({ error: "role 不合法" });
+    return;
+  }
+  // 与 DELETE 同一条底线：不能把最后一个可用管理员降级或停用，否则系统会被锁死
+  const demoting = typeof body.role === "string" && body.role !== "admin";
+  const deactivating = body.active === false || body.active === 0;
+  if (existing.role === "admin" && (demoting || deactivating)) {
+    const admins = queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND active = 1`)?.count ?? 0;
+    if (admins <= 1) {
+      res.status(400).json({ error: "不能降级或停用最后一个管理员" });
+      return;
+    }
+  }
   const password = body.password ? hashPassword(String(body.password)) : undefined;
   execute(
     `UPDATE users SET display_name = COALESCE(?, display_name), role = COALESCE(?, role), email = COALESCE(?, email),
@@ -395,7 +415,28 @@ router.post("/admin/cleanup-misleading-data", requireAuth, requireAdmin, (_req, 
 });
 
 router.post("/admin/reanalyze", requireAuth, requireAdmin, (_req, res) => {
-  res.json(reanalyzeAll());
+  // 全量重算耗时可能超过 HTTP 超时：同步等待会让调用方误以为失败。
+  // 受理后立即返回，后台执行；完成情况以审计日志（reanalyze_impacts）为准。
+  res.status(202).json({ ok: true, started: true });
+  setImmediate(() => {
+    try {
+      const result = reanalyzeAll();
+      console.log(`[giteehelper] reanalyze 完成：${JSON.stringify(result)}`);
+    } catch (error) {
+      console.error("[giteehelper] reanalyze 失败：", error instanceof Error ? error.message : error);
+    }
+  });
+});
+
+router.post("/admin/backfill-pull-head", requireAuth, requireAdmin, (_req, res) => {
+  // 要逐个 PR 回查 Gitee 提交列表，PR 多时同样可能超过 HTTP 超时：与 reanalyze 一致受理后后台执行。
+  // 直接以 apply 模式运行；完成情况看审计日志（backfill_pull_head）与控制台输出。
+  res.status(202).json({ ok: true, started: true });
+  setImmediate(() => {
+    void backfillPullHeads({ apply: true })
+      .then((result) => console.log(`[giteehelper] backfill-pull-head 完成：${JSON.stringify(result)}`))
+      .catch((error) => console.error("[giteehelper] backfill-pull-head 失败：", error instanceof Error ? error.message : error));
+  });
 });
 
 router.get("/audit", requireAuth, requireAdmin, (req, res) => {
@@ -520,8 +561,10 @@ router.get("/repairs/:id/files/:name", requireAuth, (req, res) => {
   const id = Number(req.params.id);
   const name = path.basename(String(req.params.name));
   const row = queryOne<{ impactId: number }>(`SELECT impact_id AS impactId FROM repair_bundles WHERE id = ?`, [id]);
-  const file = path.resolve(process.cwd(), "data/repair-bundles", String(row?.impactId ?? id), name);
-  if (!file.startsWith(path.resolve(process.cwd(), "data/repair-bundles")) || !fs.existsSync(file)) {
+  const baseDir = path.resolve(process.cwd(), "data/repair-bundles");
+  const file = path.resolve(baseDir, String(row?.impactId ?? id), name);
+  // startsWith 必须带路径分隔符，否则 base-dir-2 这类兄弟目录会绕过检查
+  if (!file.startsWith(`${baseDir}${path.sep}`) || !fs.existsSync(file)) {
     res.status(404).json({ error: "file not found" });
     return;
   }
@@ -651,6 +694,11 @@ router.post("/gitee/sync", requireAuth, requireAdmin, async (req, res) => {
       const pulls = await listPullRequests(config.giteeRepo);
       for (const pull of pulls) {
         const mergedAt = pull.merged_at;
+        // PR 事件不带文件就只能语义猜词：sync-pulls 已把文件列表落库，这里直接复用缓存
+        const pullNumber = Number(pull.number ?? 0);
+        const cached = pullNumber
+          ? queryOne<{ filesJson: string }>(`SELECT files_json AS filesJson FROM pull_requests WHERE project_id = 1 AND number = ?`, [pullNumber])
+          : undefined;
         const event: EventInput = {
           source: "gitee",
           sourceId: `pull-${String(pull.id ?? pull.number)}`,
@@ -660,7 +708,7 @@ router.post("/gitee/sync", requireAuth, requireAdmin, async (req, res) => {
           author: String((pull.user as Record<string, unknown> | undefined)?.login ?? "unknown"),
           branch: String((pull.base as Record<string, unknown> | undefined)?.ref ?? config.giteeDefaultBranch),
           url: String(pull.html_url ?? ""),
-          payload: { pull_request: pull, files: [], body: String(pull.body ?? "") }
+          payload: { pull_request: pull, files: cached ? parseJson<string[]>(cached.filesJson, []) : [], body: String(pull.body ?? "") }
         };
         const result = persistEventAndImpacts(event);
         saved.push({ id: result.eventId, impacts: result.impacts.length });

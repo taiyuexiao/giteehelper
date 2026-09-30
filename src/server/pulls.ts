@@ -9,7 +9,8 @@
  */
 import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 import { config } from "./config.js";
-import { giteeRequest } from "./gitee.js";
+import { fetchPullRequestCommits, giteeRequest, type PullCommit } from "./gitee.js";
+import type { CommitLine } from "./feishu.js";
 
 export interface PullRecord {
   number: number;
@@ -356,4 +357,146 @@ export async function backfillEventFiles(
     filesTotal += files.length;
   }
   return { scanned, filled, files: filesTotal, unresolved, fetched };
+}
+
+/** 事件接收时间（SQLite UTC 串）与提交时间都折成毫秒；SQLite 串没有时区标记，按 UTC 解读 */
+function toStamp(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  const stamp = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+/**
+ * 为历史 PR 事件挑出「这次事件真正推进的那个提交」。
+ *
+ * 规则与实时路径的 pickHeadCommit 同源，但多一层事件时间约束：
+ * - 优先按事件 payload 里存的 head sha 精确匹配（那就是事件当时的状态）；
+ * - head sha 缺失或已被 force push 抹掉时，取**事件时刻之前**的最新提交——
+ *   当前提交列表里的更新提交在事件发生时还不存在，绝不能拿；
+ * - 两者都不可得返回 null（unresolved），不按列表位置猜。
+ */
+export function pickHistoricalHead<T extends { sha: string; date: string | null }>(
+  commits: T[],
+  headSha: string | null | undefined,
+  receivedAt: string | number | null | undefined
+): T | null {
+  if (!commits.length) return null;
+  if (headSha) {
+    const exact = commits.find((commit) => commit.sha === headSha || commit.sha.startsWith(headSha.slice(0, 8)));
+    if (exact) return exact;
+  }
+  const bound = toStamp(receivedAt) + 120_000; // 2 分钟时钟余量
+  const candidates = commits
+    .map((commit) => ({ commit, stamp: toStamp(commit.date) }))
+    .filter((item) => item.stamp > 0 && item.stamp <= bound)
+    .sort((a, b) => b.stamp - a.stamp);
+  return candidates[0]?.commit ?? null;
+}
+
+export interface BackfillPullHeadSample {
+  event: number;
+  pull: number | null;
+  before: string;
+  after: string;
+}
+
+/**
+ * 把历史 PR 事件里存错的 pullHead（提交者身份）重算。
+ *
+ * 为什么需要：旧实现取 `/pulls/{n}/commits` 的 `at(-1)`（最老提交）当"提交者"，
+ * PR !309 的一次 update 被写成一天前最老提交的作者。`pickHeadCommit` 修复了新事件，
+ * 但已落库的 payload_json 里还是错的 pullHead——控制台回看旧事件看到的仍是错误身份。
+ *
+ * 默认只预览（options.apply 为 false），会照常回查 Gitee 提交列表（只读）；
+ * 每个 PR 只拉一次并分页取全（head sha 可能不在第一页），`--max` 限制回查的 PR 数。
+ */
+export async function backfillPullHeads(
+  options: { apply?: boolean; maxFetches?: number } = {},
+  projectId = 1
+): Promise<{
+  scanned: number; withoutHead: number; fixed: number; alreadyCorrect: number; unresolved: number;
+  fetched: number; samples: BackfillPullHeadSample[];
+}> {
+  if (!config.giteeRepo || !config.giteeToken) throw new Error("GITEE_TOKEN 与 GITEE_REPO 未配置");
+  const events = queryAll<{ id: number; payloadJson: string; createdAt: string }>(
+    `SELECT id, payload_json AS payloadJson, created_at AS createdAt FROM change_events
+     WHERE project_id = ? AND event_type = 'pull_request'`,
+    [projectId]
+  );
+  const commitsByPull = new Map<number, PullCommit[]>();
+  const maxFetches = options.maxFetches ?? 200;
+  let fetched = 0;
+  let scanned = 0;
+  let withoutHead = 0;
+  let fixed = 0;
+  let alreadyCorrect = 0;
+  let unresolved = 0;
+  const samples: BackfillPullHeadSample[] = [];
+  const describe = (head: CommitLine) =>
+    `${head.shortSha} ${head.authorName}${head.authorEmail ? ` <${head.authorEmail}>` : ""}`;
+
+  const loadCommits = async (number: number): Promise<PullCommit[] | null> => {
+    const cached = commitsByPull.get(number);
+    if (cached) return cached;
+    if (fetched >= maxFetches) return null;
+    fetched += 1;
+    const commits = await fetchPullRequestCommits(config.giteeRepo, number, { perPage: 100, maxPages: 5 }).catch(() => [] as PullCommit[]);
+    commitsByPull.set(number, commits);
+    return commits;
+  };
+
+  for (const event of events) {
+    const payload = parseJson<Record<string, unknown>>(event.payloadJson, {});
+    const head = payload.pullHead as CommitLine | undefined;
+    if (!head) {
+      // `/api/gitee/sync` 建的事件从未走过 enrich，没有 pullHead，不在本次修正范围
+      withoutHead += 1;
+      continue;
+    }
+    scanned += 1;
+    const pull = (payload.pull_request ?? {}) as Record<string, unknown>;
+    const pullHeadRef = (pull.head ?? {}) as Record<string, unknown>;
+    const number = Number(payload.number ?? payload.iid ?? pull.number ?? 0) || 0;
+    const commits = number ? await loadCommits(number) : null;
+    if (!commits || commits.length === 0) {
+      unresolved += 1;
+      continue;
+    }
+    const headSha = typeof pullHeadRef.sha === "string" ? pullHeadRef.sha : null;
+    const candidate = pickHistoricalHead(commits, headSha, event.createdAt);
+    if (!candidate) {
+      unresolved += 1;
+      continue;
+    }
+    const nextHead: CommitLine = {
+      ...head,
+      shortSha: candidate.sha.slice(0, 8),
+      summary: candidate.message.split("\n")[0] || head.summary,
+      authorName: candidate.name ?? head.authorName,
+      authorEmail: candidate.email,
+      committedAt: candidate.date ?? head.committedAt,
+      // 旧数据把「分支」写成目标分支 main，同样按 payload 里的源分支修正
+      branch: typeof pullHeadRef.ref === "string" && pullHeadRef.ref ? pullHeadRef.ref : head.branch
+    };
+    if (nextHead.shortSha === head.shortSha && nextHead.authorEmail === head.authorEmail && nextHead.branch === head.branch) {
+      alreadyCorrect += 1;
+      continue;
+    }
+    if (samples.length < 8) {
+      samples.push({ event: event.id, pull: number || null, before: describe(head), after: describe(nextHead) });
+    }
+    if (options.apply) {
+      execute(`UPDATE change_events SET payload_json = ? WHERE id = ?`, [
+        JSON.stringify({ ...payload, pullHead: nextHead }),
+        event.id
+      ]);
+    }
+    fixed += 1;
+  }
+
+  if (options.apply) {
+    audit(null, "system", "backfill_pull_head", "project", projectId, { scanned, fixed, alreadyCorrect, unresolved, fetched });
+  }
+  return { scanned, withoutHead, fixed, alreadyCorrect, unresolved, fetched, samples };
 }

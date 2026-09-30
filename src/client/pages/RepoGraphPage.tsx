@@ -64,13 +64,20 @@ function ownerOfCommit(meta: RepoCommitMeta) {
 
 function timeAgo(value: string | null | undefined) {
   if (!value) return "—";
-  const stamp = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
-  if (!Number.isFinite(stamp)) return value;
+  const stamp = parseDbTime(value);
+  if (!stamp) return value;
   const minutes = Math.round((Date.now() - stamp) / 60000);
   if (minutes < 1) return "刚刚";
   if (minutes < 60) return `${minutes} 分钟前`;
   if (minutes < 60 * 24) return `${Math.round(minutes / 60)} 小时前`;
   return `${Math.round(minutes / 1440)} 天前`;
+}
+
+/** SQLite 的 datetime('now') 是无时区 UTC 串，直接 Date.parse 会按本地时区解读，未读计数会差出几个小时 */
+function parseDbTime(value: string | null | undefined) {
+  if (!value) return 0;
+  const stamp = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+  return Number.isFinite(stamp) ? stamp : 0;
 }
 
 export default function RepoGraphPage({ user }: { user: { role: string } }) {
@@ -88,6 +95,8 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
   const focusRef = useRef<FocusLevel>({ kind: "overview" });
   const graphRadiusRef = useRef(300);
   const anchorsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  /** 力学引擎当前使用的锚点：全景时等于 anchorsRef，聚焦展开时换成展开圆盘 */
+  const activeAnchorsRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
   const resizeRef = useRef<(() => void) | null>(null);
   const frameRef = useRef<number>(0);
   const knownCommitsRef = useRef<Set<string>>(new Set());
@@ -122,6 +131,19 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
     }
   }, [limit]);
 
+  // 「补齐提交」必须真的调同步接口：只刷新图数据时，没有公网回调的时段永远等不到新提交
+  const syncCommits = useCallback(async () => {
+    setBusy(true);
+    try {
+      await api("/gitee/sync", { method: "POST", body: JSON.stringify({ only: "commits" }) });
+      await load(limit);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }, [load, limit]);
+
   useEffect(() => { void load(limit); }, [limit, load]);
 
   // 自动刷新：WebHook 是实时入口，页面也要自己把新提交拉进来，"新提交提示"才有意义
@@ -145,7 +167,7 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
       const region = ensure(ownerOfCommit(meta));
       region.commits.push(node as RepoNode);
       if (meta.conflict) region.conflicts += 1;
-      if (Date.parse(meta.receivedAt) > lastSeen) region.unread += 1;
+      if (parseDbTime(meta.receivedAt) > lastSeen) region.unread += 1;
     }
     return [...map.values()].sort((a, b) => b.modules.length - a.modules.length);
   }, [data, lastSeen]);
@@ -155,9 +177,9 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
       .map((node) => node as RepoNode)
       .filter((node) => {
         const meta = commitMeta(node);
-        return meta ? Date.parse(meta.receivedAt) > lastSeen : false;
+        return meta ? parseDbTime(meta.receivedAt) > lastSeen : false;
       })
-      .sort((a, b) => Date.parse(commitMeta(b)!.receivedAt) - Date.parse(commitMeta(a)!.receivedAt));
+      .sort((a, b) => parseDbTime(commitMeta(b)!.receivedAt) - parseDbTime(commitMeta(a)!.receivedAt));
   }, [data, lastSeen]);
 
   // ---- 可见子集（只算 id，对象复用，过滤时不重跑布局）----
@@ -242,6 +264,22 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
 
   frameGraphRef.current = frameGraph;
 
+  /**
+   * 锚点力必须读 ref 而不是闭包捕获的数组：自动刷新会重建节点对象数组，
+   * 捕获旧数组会让锚点力只作用于已废弃的对象，布局随刷新逐渐散架。
+   */
+  const anchorForce = useCallback((alpha: number) => {
+    const anchors = activeAnchorsRef.current;
+    for (const node of nodesRef.current) {
+      const anchor = anchors.get(node.id);
+      if (!anchor) continue;
+      const k = 0.9 * alpha;
+      node.vx = (node.vx ?? 0) + (anchor.x - (node.x ?? 0)) * k;
+      node.vy = (node.vy ?? 0) + (anchor.y - (node.y ?? 0)) * k;
+      node.vz = (node.vz ?? 0) + (anchor.z - (node.z ?? 0)) * k;
+    }
+  }, []);
+
   const zoomBy = useCallback((factor: number) => {
     const graph = graphRef.current;
     if (!graph) return;
@@ -312,6 +350,9 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // 输入框里打 "C++"、"e-2" 不能触发缩放，Esc 也不能把聚焦层级退掉
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) return;
       if (event.key === "Escape" && focusRef.current.kind !== "overview" && !document.fullscreenElement) backToOverview();
       if (event.key === "+" || event.key === "=") zoomBy(0.8);
       if (event.key === "-") zoomBy(1.25);
@@ -325,7 +366,15 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
     if (!data) return;
     const projectId = data.nodes.find((node) => node.type === "project")?.id;
     const hubs = new Map<string, RepoNode>();
-    const displayNodes: RepoNode[] = data.nodes.map((node) => ({ ...node }));
+    // 复用上一次的节点对象：力学引擎累计的位置与速度都在对象上，
+    // 整体重建会让 60 秒一次的自动刷新把布局打散（对象换了，锚点与速度全部归零）
+    const previous = new Map(nodesRef.current.map((node) => [node.id, node]));
+    const displayNodes: RepoNode[] = data.nodes.map((node) => {
+      const reused = previous.get(node.id);
+      if (!reused) return { ...node };
+      Object.assign(reused, node);
+      return reused;
+    });
     const displayLinks: RepoLink[] = [];
     for (const edge of data.edges) {
       const target = edge.label === "contains" ? data.nodes.find((node) => node.id === edge.target) : undefined;
@@ -333,7 +382,11 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
         const owner = (target.meta?.owner as string) || UNASSIGNED_OWNER;
         let hub = hubs.get(owner);
         if (!hub) {
-          hub = { id: `owner:${owner}`, label: owner, type: "owner", meta: { owner, modules: 0 } };
+          const hubId = `owner:${owner}`;
+          const reused = previous.get(hubId);
+          hub = reused ?? { id: hubId, label: owner, type: "owner", meta: { owner, modules: 0 } };
+          hub.label = owner;
+          hub.meta = { owner, modules: 0 };
           hubs.set(owner, hub);
           displayNodes.push(hub);
           if (projectId) displayLinks.push({ id: `hub-${owner}`, source: projectId, target: hub.id, label: "owns", confidence: "manual" });
@@ -346,6 +399,20 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
     }
     nodesRef.current = displayNodes;
     linksRef.current = displayLinks;
+
+    // 锚点是确定性的，只补新出现的节点；已有节点保留原锚点，力学目标不漂移
+    for (const [id, anchor] of computeAnchors(nodesRef.current)) {
+      if (!anchorsRef.current.has(id)) anchorsRef.current.set(id, anchor);
+    }
+    if (activeAnchorsRef.current.size === 0) activeAnchorsRef.current = anchorsRef.current;
+    for (const node of nodesRef.current) {
+      if (node.x !== undefined) continue;
+      const anchor = anchorsRef.current.get(node.id);
+      if (!anchor) continue;
+      node.x = anchor.x;
+      node.y = anchor.y;
+      node.z = anchor.z;
+    }
 
     let graph = graphRef.current;
     if (!graph && containerRef.current) {
@@ -416,16 +483,7 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
           frameGraphRef.current?.(500, scope);
         });
 
-      const anchors = computeAnchors(nodesRef.current);
-      anchorsRef.current = anchors;
-      for (const node of nodesRef.current) {
-        const anchor = anchors.get(node.id);
-        if (!anchor) continue;
-        node.x = anchor.x;
-        node.y = anchor.y;
-        node.z = anchor.z;
-      }
-      graph.d3Force("anchor", makeAnchorForce(nodesRef.current, anchors, 0.9) as never);
+      graph.d3Force("anchor", anchorForce as never);
 
       const charge = graph.d3Force("charge");
       if (charge && "strength" in charge) (charge as unknown as { strength: (value: number) => void }).strength(-22);
@@ -532,7 +590,8 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
         });
       }
     }
-    graph.d3Force("anchor", makeAnchorForce(nodesRef.current, expanded, 0.9) as never);
+    graph.d3Force("anchor", anchorForce as never);
+    activeAnchorsRef.current = expanded;
     graph.d3ReheatSimulation?.();
     const scope = focus.kind === "overview"
       ? undefined
@@ -788,7 +847,7 @@ export default function RepoGraphPage({ user }: { user: { role: string } }) {
             <button className="secondary-button" onClick={toggleFullscreen}>
               {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{fullscreen ? "退出全屏" : "全屏"}
             </button>
-            {user.role === "admin" && <button className="secondary-button" onClick={() => void load(limit)} disabled={busy}><RefreshCw size={16} />补齐提交</button>}
+            {user.role === "admin" && <button className="secondary-button" onClick={() => void syncCommits()} disabled={busy}><RefreshCw size={16} />补齐提交</button>}
             <button className="primary-button" onClick={() => void load(limit)} disabled={busy}><RefreshCw size={16} />{busy ? "加载中…" : "刷新"}</button>
           </>
         }
@@ -1068,19 +1127,6 @@ function computeAnchors(nodes: RepoNode[]) {
   return anchors;
 }
 
-function makeAnchorForce(nodes: RepoNode[], anchors: Map<string, { x: number; y: number; z: number }>, strength: number) {
-  return (alpha: number) => {
-    for (const node of nodes) {
-      const anchor = anchors.get(node.id);
-      if (!anchor) continue;
-      const k = strength * alpha;
-      node.vx = (node.vx ?? 0) + (anchor.x - (node.x ?? 0)) * k;
-      node.vy = (node.vy ?? 0) + (anchor.y - (node.y ?? 0)) * k;
-      node.vz = (node.vz ?? 0) + (anchor.z - (node.z ?? 0)) * k;
-    }
-  };
-}
-
 function buildNodeObject(
   node: RepoNode,
   haloRef: MutableRefObject<{ node: RepoNode; ring: THREE.Mesh }[]>,
@@ -1173,10 +1219,17 @@ function escapeHtml(value: string) {
 }
 
 const labelElements = new Map<string, { element: HTMLButtonElement; signature: string }>();
+const LABEL_CACHE_LIMIT = 600;
 
 function labelElement(id: string, content: () => string, className: string, onClick?: () => void) {
   let entry = labelElements.get(id);
   if (!entry) {
+    // 缓存有上限：长会话里提交标签会随刷新不断累积，超限先清掉已断开的元素
+    if (labelElements.size >= LABEL_CACHE_LIMIT) {
+      for (const [key, value] of labelElements) {
+        if (!value.element.isConnected) labelElements.delete(key);
+      }
+    }
     const element = document.createElement("button");
     element.type = "button";
     entry = { element, signature: "" };

@@ -321,7 +321,8 @@ export default function GraphPage() {
             onEdgesChange={onEdgesChange}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
-            key={`${viewMode}-${focusEvent}-${query}`}
+            // key 不含 query：搜索每敲一个字符都会改 query，含进去会整图重挂载并丢失缩放状态
+            key={`${viewMode}-${focusEvent}`}
             fitView
             fitViewOptions={{ padding: 0.2, maxZoom: 0.95 }}
             minZoom={0.22}

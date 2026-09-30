@@ -25,10 +25,19 @@ export default function ModulesPage({ user }: { user: { role: string } }) {
   const canRunIntegration = canEdit || user.role === "reviewer" || user.role === "developer";
 
   const load = async () => {
-    const [moduleData, contractData, userData] = await Promise.all([
-      api<ModuleRow[]>("/modules"), api<ContractRow[]>("/contracts"), api<User[]>("/users")
+    // /api/users 是 admin-only；非 admin 一并发起会让整个 Promise.all 失败、页面永远停在加载态。
+    // 负责人下拉只在可编辑（admin/maintainer）时用得到，其中 maintainer 也可能无权限，失败时静默降级为空。
+    const [moduleData, contractData] = await Promise.all([
+      api<ModuleRow[]>("/modules"), api<ContractRow[]>("/contracts")
     ]);
-    setModules(moduleData); setContracts(contractData); setUsers(userData);
+    setModules(moduleData); setContracts(contractData);
+    if (canEdit) {
+      try {
+        setUsers(await api<User[]>("/users"));
+      } catch {
+        setUsers([]);
+      }
+    }
     setError("");
   };
   useEffect(() => { void load().catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }, []);

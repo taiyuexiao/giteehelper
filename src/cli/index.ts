@@ -7,7 +7,7 @@ import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
-import { backfillEventFiles, pullStats, syncPullRequests } from "../server/pulls.js";
+import { backfillEventFiles, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
@@ -223,6 +223,14 @@ async function main() {
       }));
       return 0;
     }
+    case "backfill-pull-head": {
+      // 默认只预览会修正哪些事件（回查 Gitee 提交列表，只读）；--apply 才改写历史 payload
+      printJson(await backfillPullHeads({
+        apply: args.includes("--apply"),
+        maxFetches: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || undefined
+      }));
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -262,6 +270,7 @@ Commands:
   giteehelper sync-pulls [--with-comments]
   giteehelper pulls
   giteehelper backfill-files
+  giteehelper backfill-pull-head [--apply]
   giteehelper rfc-sync
   giteehelper rfc-coverage
   giteehelper rfc-apply [--apply]

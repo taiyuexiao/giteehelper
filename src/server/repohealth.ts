@@ -97,6 +97,14 @@ export function suggestPatternFixes(patterns: string[], includeReview: boolean) 
 export async function patternFixPreview(projectId = 1, includeReview = false) {
   const files = await fetchRepoTree();
   const report = await patternHealth(projectId);
+  // 同一文件可能同时被多个模式命中：按文件去重统计，否则重复计数会被当成修复收益
+  const countUniqueFiles = (patterns: string[]) => {
+    const hit = new Set<string>();
+    for (const pattern of patterns) {
+      for (const file of files) if (wildcardMatch(file, pattern)) hit.add(file);
+    }
+    return hit.size;
+  };
   const fixes = report.modules_detail.map((item) => {
     const suggestion = suggestPatternFixes(item.patterns, includeReview);
     return {
@@ -105,10 +113,8 @@ export async function patternFixPreview(projectId = 1, includeReview = false) {
       owner: item.owner,
       before: item.patterns,
       after: suggestion.patterns,
-      filesBefore: item.matches.reduce((sum, one) => sum + one.files, 0),
-      filesAfter: suggestion.patterns.reduce(
-        (sum, pattern) => sum + files.filter((file) => wildcardMatch(file, pattern)).length, 0
-      ),
+      filesBefore: countUniqueFiles(item.patterns),
+      filesAfter: countUniqueFiles(suggestion.patterns),
       pendingReview: suggestion.pendingReview
     } satisfies PatternFix;
   });

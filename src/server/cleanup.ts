@@ -22,9 +22,11 @@ function hasExecutionEvidence(resultJson: string): boolean {
 }
 
 export function cleanupMisleadingData(): CleanupSummary {
-  const fakeRuns = queryAll<{ id: number; resultJson: string }>(
-    `SELECT id, result_json AS resultJson FROM integration_runs`
-  ).filter((row) => !hasExecutionEvidence(row.resultJson));
+  // 只清理「声称通过」却没有执行证据的记录——那才是误导；
+  // blocked/queued 是如实的状态（比如未配 RUN_MODULE_TESTS），删掉它们会丢掉真实的运行历史
+  const fakeRuns = queryAll<{ id: number; status: string; resultJson: string }>(
+    `SELECT id, status, result_json AS resultJson FROM integration_runs`
+  ).filter((row) => row.status === "passed" && !hasExecutionEvidence(row.resultJson));
   const fakeRunIds = fakeRuns.map((row) => row.id);
 
   const legacyModules = queryAll<{ id: number; moduleKey: string; name: string }>(

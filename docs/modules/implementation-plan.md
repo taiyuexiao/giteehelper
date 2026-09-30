@@ -136,10 +136,11 @@
 4. 相关文档已更新；
 5. 没有真实 Token/密码进入 Git。
 
-## 当前执行状态（2026-09-26）
-- ✅ 阶段 0–5、7 完成，25 项自动化测试（`tests/` 下 9 个测试文件，运行在独立库 `data/test/giteehelper-test.db`，由 `pretest` 重置）和完整构建通过；关系图已按反馈重构。
+## 当前执行状态（2026-09-29）
+- ✅ 阶段 0–5、7 完成，60 项自动化测试（`tests/` 下 12 个测试文件，运行在独立库 `data/test/giteehelper-test.db`，由 `pretest` 重置）和完整构建通过；关系图已按反馈重构。
 - ✅ 飞书云盘/多维表格资料已一次性导入；8 个顶层模块、134 个真实工作项和 13 位技术负责人已进入模块映射。
 - ✅ Gitee Token、用户、目标仓库和最近 20 个 PR 同步已真实验证。
 - ✅ 本地 Gitee WebHook、影响、联调 Run 和 Repair Bundle 链路已验证。
-- ◐ 飞书真实发送和 Gitee 真实仓库 WebHook 等待测试群/公网回调地址。
-- ✅ 实现说明已沉淀到 backend-platform、gitee-feishu-integrations、impact-and-integration、web-console、cli-and-packaging 模块文档。
+- ✅ 生产部署（Docker）已接收真实 Gitee WebHook 并发送飞书群卡片（2026-09-29 借真实事件修复两处通知身份误判）。
+- ✅ 超出原计划的增量：提交级实时同步与 3D 仓库全景、影响原因分类、路径模式体检、契约即代码、PR 级依赖图与主干前进检测。
+- ✅ 实现说明已沉淀到 backend-platform、gitee-feishu-integrations、impact-and-integration、web-console、repo-panorama、cli-and-packaging 模块文档。

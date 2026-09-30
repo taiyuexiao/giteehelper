@@ -37,6 +37,7 @@ export interface CommitAnalysis {
   affectedModules: Array<{
     id: number; name: string; owner: string | null; severity: Severity; reason: string; nextAction: string;
     reasonLabel?: string | null; reasonNature?: string | null; reasonAction?: string | null;
+    grounded?: boolean; evidenceHint?: string | null;
   }>;
   conflict: boolean;
   severity: Severity;
@@ -156,16 +157,21 @@ export function ingestCommit(commit: CommitInput, projectId = 1) {
         [impact.moduleId]
       )
       : undefined;
+    const pathEvidence = impact.evidence.filter((item) => item.type === "path" && item.id);
     return {
       id: impact.moduleId ?? 0,
-      name: module?.name ?? "未归属影响",
-      owner: module?.owner ?? null,
+      name: module?.name ?? areaNameOf(impact.reason),
+      // 区域影响没有 moduleId，但可能只有一位负责人：通知与图谱都要能回答"该找谁"
+      owner: module?.owner ?? ownerNameOf(impact.userId),
       severity: impact.severity,
       reason: impact.reason,
       nextAction: impact.nextAction,
       reasonLabel: impact.reasonLabel ?? null,
       reasonNature: impact.reasonNature ?? null,
-      reasonAction: impact.reasonAction ?? null
+      reasonAction: impact.reasonAction ?? null,
+      // 与 describeImpacts 同一套分档口径：有路径证据=确定，只有语义=线索
+      grounded: pathEvidence.length > 0,
+      evidenceHint: pathEvidence.length ? pathEvidence.slice(0, 2).map((item) => item.id).join("、") : null
     };
   });
 
@@ -205,6 +211,15 @@ export function ingestCommit(commit: CommitInput, projectId = 1) {
   return { commitId, eventId: persisted.eventId, impacts, analysis, created: true };
 }
 
+function ownerNameOf(userId: number | null | undefined) {
+  if (!userId) return null;
+  return queryOne<{ owner: string | null }>(`SELECT display_name AS owner FROM users WHERE id = ?`, [userId])?.owner ?? null;
+}
+
+function areaNameOf(reason: string) {
+  return reason.match(/区域「([^」]+)」/)?.[1] ?? "未归属影响";
+}
+
 /** 把影响翻译成「模块名 + 负责人」，通知要按人分组展示 */
 export function describeImpacts(impacts: Impact[]) {
   return impacts.map((impact) => {
@@ -215,12 +230,10 @@ export function describeImpacts(impacts: Impact[]) {
       )
       : undefined;
     // 区域影响没有 moduleId，但有 userId —— 通知必须能回答"该找谁"
-    const owner = module?.owner ?? (impact.userId
-      ? queryOne<{ owner: string | null }>(`SELECT display_name AS owner FROM users WHERE id = ?`, [impact.userId])?.owner ?? null
-      : null);
+    const owner = module?.owner ?? ownerNameOf(impact.userId);
     const pathEvidence = impact.evidence.filter((item) => item.type === "path" && item.id);
     return {
-      moduleName: module?.name ?? (impact.reason.match(/区域「([^」]+)」/)?.[1] ?? "未归属影响"),
+      moduleName: module?.name ?? areaNameOf(impact.reason),
       owner,
       severity: impact.severity,
       reasonLabel: impact.reasonLabel ?? null,
