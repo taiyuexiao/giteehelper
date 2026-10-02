@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardList, Download, ExternalLink, ListChecks, RefreshCw, UserRound, Users } from "lucide-react";
+import { ClipboardList, Download, ExternalLink, GitCommitHorizontal, ListChecks, RefreshCw, Users } from "lucide-react";
 import { api, downloadFile } from "../api";
-import { EmptyState, Loading, PageHeader, StatusBadge } from "../components";
+import { EmptyState, Loading, Modal, PageHeader, StatusBadge } from "../components";
 import type { Role } from "../../shared/types";
 
 type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
@@ -391,71 +391,183 @@ function TaskDrawer({ task, onClose }: { task: BoardTask; onClose: () => void })
   );
 }
 
-/* ---------- 个人成长轨迹 ---------- */
+function weeklyMerged(details: PullDetail[], name: string): Array<{ label: string; count: number }> {
+  // 近 12 周（周一对齐），统计该成员名下 merged PR 的落周分布
+  const now = new Date();
+  const mondayOffset = (now.getUTCDay() + 6) % 7;
+  const thisMonday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - mondayOffset);
+  const weeks: Array<{ start: number; count: number }> = [];
+  for (let index = 11; index >= 0; index -= 1) {
+    weeks.push({ start: thisMonday - index * 7 * 86_400_000, count: 0 });
+  }
+  for (const item of details) {
+    if (item.state !== "merged" || !item.authorNames.includes(name) || !item.mergedAt) continue;
+    const stamp = Date.parse(item.mergedAt.includes("T") ? item.mergedAt : `${item.mergedAt.replace(" ", "T")}Z`);
+    if (!Number.isFinite(stamp)) continue;
+    for (let index = weeks.length - 1; index >= 0; index -= 1) {
+      if (stamp >= weeks[index].start) {
+        weeks[index].count += 1;
+        break;
+      }
+    }
+  }
+  return weeks.map((week) => ({
+    label: `${new Date(week.start).getUTCMonth() + 1}/${new Date(week.start).getUTCDate()}`,
+    count: week.count
+  }));
+}
 
-function Heatmap({ heat }: { heat: number[][] }) {
-  const max = Math.max(1, ...heat.flat());
-  const level = (value: number) => value === 0 ? 0 : Math.min(4, Math.ceil((value / max) * 4));
-  const days = ["日", "一", "二", "三", "四", "五", "六"];
+function BarChart({ data }: { data: Array<{ label: string; count: number }> }) {
+  const max = Math.max(1, ...data.map((item) => item.count));
   return (
-    <div className="heatmap-wrap">
-      <div className="heatmap-hours">{Array.from({ length: 24 }, (_, hour) => <span key={hour}>{hour % 3 === 0 ? hour : ""}</span>)}</div>
-      {heat.map((row, day) => (
-        <div key={day} className="heatmap-row">
-          <span className="heatmap-day">{days[day]}</span>
-          {row.map((value, hour) => (
-            <i key={hour} className={`heatmap-cell level-${level(value)}`} title={`${days[day]} ${hour} 点 · ${value} 次提交`} />
-          ))}
+    <div className="bar-chart">
+      {data.map((item) => (
+        <div key={item.label} className="bar-col" title={`${item.label} 那周 · ${item.count} 个`}>
+          <span className="bar-value">{item.count || ""}</span>
+          <i className={item.count ? "bar-fill" : "bar-fill empty"} style={{ height: `${(item.count / max) * 100}%` }} />
+          <small>{item.label}</small>
         </div>
       ))}
     </div>
   );
 }
 
+/** 提交节奏热力图：行=周日~周六，列=0~23 点（东八区），GitHub Contributions 风格 */
+function Heatmap({ heat }: { heat: number[][] }) {
+  const max = Math.max(1, ...heat.flat());
+  const level = (value: number) => value === 0 ? 0 : Math.min(4, Math.ceil((value / max) * 4));
+  const days = ["日", "一", "二", "三", "四", "五", "六"];
+  let total = 0;
+  for (const row of heat) for (const value of row) total += value;
+  return (
+    <div className="heatmap2">
+      <div className="heatmap2-grid">
+        <span className="heatmap2-corner" />
+        {Array.from({ length: 24 }, (_, hour) => (
+          <span key={hour} className="heatmap2-hour">{hour % 3 === 0 ? hour : ""}</span>
+        ))}
+        {heat.map((row, day) => (
+          <div key={day} className="heatmap2-row">
+            <span className="heatmap2-day">{days[day]}</span>
+            {row.map((value, hour) => (
+              <i key={hour} className={`heatmap2-cell l${level(value)}`} title={`${days[day]} ${hour}:00 · ${value} 次提交`} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="heatmap2-footer">
+        <span>共 {total} 次提交</span>
+        <span className="heatmap2-legend">少
+          {[0, 1, 2, 3, 4].map((l) => <i key={l} className={`heatmap2-cell l${l}`} />)}
+        多</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 个人成长轨迹 ---------- */
+
 function People({ people, details }: { people: PersonMetrics[]; details: PullDetail[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [recordsOpen, setRecordsOpen] = useState(false);
   const selected = people.find((person) => person.userId === selectedId) ?? people[0];
   if (!selected) return <EmptyState icon={<Users size={25} />} title="还没有成员数据" text="同步仓库并导入分工后，这里会展示每位成员的成长轨迹。" />;
+
+  const weekly = weeklyMerged(details, selected.name);
+  const mergedMine = details.filter((item) => item.state === "merged" && item.authorNames.includes(selected.name));
+  const docCount = mergedMine.filter((item) => item.kind === "doc").length;
+  const codeCount = mergedMine.length - docCount;
+  const doneRate = selected.tasksOwned ? Math.round((selected.tasksDone / selected.tasksOwned) * 100) : 0;
+
   return (
-    <>
-      <section className="progress-people">
-      <aside className="panel progress-people-list">
+    <div className="progress-people">
+      <aside className="panel progress-members">
         <div className="panel-header"><div><h2>成员</h2><p>{people.length} 人</p></div></div>
-        {people.map((person) => (
-          <button key={person.userId} className={selected.userId === person.userId ? "run-item active" : "run-item"} onClick={() => setSelectedId(person.userId)}>
-            <div><strong>{person.name}</strong><small>{person.tasksDone}/{person.tasksOwned} 任务 · {person.mergedPrs} PR</small></div>
-            <UserRound size={16} />
-          </button>
-        ))}
-      </aside>
-      <article className="panel progress-person">
-        <div className="panel-header">
-          <div><h2>{selected.name}</h2><p>提交邮箱：{selected.emails.join("、") || "未对齐"}</p></div>
-          <span className={`badge ${selected.tasksDone === selected.tasksOwned && selected.tasksOwned > 0 ? "status-passed" : "status-clarification"}`}>
-            {selected.tasksDone}/{selected.tasksOwned} 任务完成
-          </span>
+        <div className="progress-member-list">
+          {people.map((person) => (
+            <button key={person.userId} className={selected.userId === person.userId ? "member-row active" : "member-row"} onClick={() => setSelectedId(person.userId)}>
+              <span className="member-avatar">{person.name.slice(0, 1)}</span>
+              <span className="member-copy">
+                <strong>{person.name}</strong>
+                <small>{person.tasksDone}/{person.tasksOwned} 任务 · {person.mergedPrs} PR</small>
+              </span>
+            </button>
+          ))}
         </div>
+      </aside>
+
+      <section className="panel progress-person">
+        <header className="progress-person-head">
+          <div className="progress-person-id">
+            <span className="member-avatar large">{selected.name.slice(0, 1)}</span>
+            <div>
+              <h2>{selected.name}</h2>
+              <p>提交邮箱：{selected.emails.join("、") || "未对齐"}</p>
+            </div>
+          </div>
+          <div className="progress-person-actions">
+            <span className={`badge ${selected.tasksDone === selected.tasksOwned && selected.tasksOwned > 0 ? "status-passed" : "status-clarification"}`}>
+              任务 {selected.tasksDone}/{selected.tasksOwned}
+            </span>
+            <button className="secondary-button" onClick={() => setRecordsOpen(true)}>
+              <ClipboardList size={16} />查看提交记录
+            </button>
+          </div>
+        </header>
+
+        <div className="task-progress">
+          <div className="task-progress-track"><i style={{ width: `${doneRate}%` }} /></div>
+          <small>任务完成 {selected.tasksDone}/{selected.tasksOwned}{selected.tasksOwned ? `（${doneRate}%）` : ""}</small>
+        </div>
+
         <section className="metric-grid">
           <article className="metric"><span>合并 PR</span><strong>{selected.mergedPrs}</strong><RefreshCw size={19} /></article>
           <article className="metric"><span>在飞 PR</span><strong>{selected.openPrs}</strong><RefreshCw size={19} /></article>
-          <article className="metric"><span>文档 / 代码 PR</span><strong>{selected.docPrs} / {selected.codePrs}</strong><ClipboardList size={19} /></article>
+          <article className="metric"><span>提交次数</span><strong>{selected.commitCount}</strong><GitCommitHorizontal size={19} /></article>
           <article className="metric"><span>代码量</span><strong>+{selected.additions}/-{selected.deletions}</strong><ClipboardList size={19} /></article>
           <article className="metric"><span>平均合并时长</span><strong>{selected.avgMergeHours === null ? "—" : `${selected.avgMergeHours} 小时`}</strong><RefreshCw size={19} /></article>
           <article className="metric"><span>被 ! 引用</span><strong>{selected.referencedBy}</strong><Users size={19} /></article>
         </section>
-        <h3>提交节奏（东八区）</h3>
-        <Heatmap heat={selected.heat} />
-        <p className="detail-note">共 {selected.commitCount} 次提交；引用他人 PR {selected.referencesOut} 次。评审常见错误分类需要先回填评审评论（见模块文档待办）。</p>
-      </article>
+
+        <div className="progress-charts">
+          <div className="chart-block">
+            <h3>合并 PR 走势（近 12 周）</h3>
+            <BarChart data={weekly} />
+          </div>
+          <div className="chart-block">
+            <h3>合并 PR 构成</h3>
+            {mergedMine.length === 0 ? (
+              <p className="detail-note">还没有合并的 PR。</p>
+            ) : (
+              <>
+                <div className="mix-bar">
+                  <i className="mix-doc" style={{ width: `${(docCount / mergedMine.length) * 100}%` }} />
+                  <i className="mix-code" style={{ width: `${(codeCount / mergedMine.length) * 100}%` }} />
+                </div>
+                <div className="mix-legend">
+                  <span><i className="mix-dot mix-dot-doc" />文档 PR {docCount}</span>
+                  <span><i className="mix-dot mix-dot-code" />代码 PR {codeCount}</span>
+                </div>
+              </>
+            )}
+            <p className="detail-note">文档 = 只改 docs/ 的 RFC 类 PR；在飞的 {selected.openPrs} 个未计入。</p>
+          </div>
+        </div>
+
+        <div className="chart-block">
+          <h3>提交节奏（东八区）</h3>
+          <Heatmap heat={selected.heat} />
+        </div>
       </section>
-      <PullDetailTable details={details} />
-    </>
+
+      {recordsOpen && <PullRecordModal details={details} onClose={() => setRecordsOpen(false)} />}
+    </div>
   );
 }
 
-/* ---------- PR 明细（与 xlsx 导出同一数据源，WebHook 实时更新） ---------- */
+/* ---------- 提交记录弹窗（原始明细 + xlsx 导出） ---------- */
 
-function PullDetailTable({ details }: { details: PullDetail[] }) {
+function PullRecordModal({ details, onClose }: { details: PullDetail[]; onClose: () => void }) {
   const [stateFilter, setStateFilter] = useState("");
   const [authorFilter, setAuthorFilter] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -483,46 +595,39 @@ function PullDetailTable({ details }: { details: PullDetail[] }) {
     }
   }
 
-  const stateBadge = (state: string) => (
-    <span className={`badge ${state === "merged" ? "status-passed" : state === "open" ? "status-running" : "status-blocked"}`}>{state}</span>
-  );
-
   return (
-    <section className="panel progress-detail">
-      <div className="panel-header">
-        <div><h2>PR 明细</h2><p>共 {details.length} 个 PR，命中 {filtered.length} 个；作者按提交署名邮箱解析，Merge 同步提交不计。数据随 WebHook 实时更新。</p></div>
-        <button className="secondary-button" onClick={() => void exportXlsx()} disabled={exporting}>
-          <Download size={16} />{exporting ? "生成中…" : "导出 xlsx"}
-        </button>
-      </div>
-      <div className="filter-bar" style={{ padding: "0 0 10px" }}>
-        <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="按状态过滤">
-          <option value="">全部状态</option>
-          <option value="merged">merged</option>
-          <option value="open">open</option>
-          <option value="closed">closed</option>
-        </select>
-        <select value={authorFilter} onChange={(event) => setAuthorFilter(event.target.value)} aria-label="按提交作者过滤">
-          <option value="">全部作者</option>
-          {authors.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-        <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索编号 / 标题 / 分支" />
-      </div>
-      {filtered.length === 0 ? (
-        <EmptyState icon={<ClipboardList size={23} />} title="没有匹配的 PR" text="调整筛选条件后重试。" />
-      ) : (
-        <div className="table-wrap">
+    <Modal title={`提交记录（${filtered.length}/${details.length} 个 PR）`} wide onClose={onClose}>
+      <div className="progress-records">
+        <div className="record-toolbar">
+          <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="按状态过滤">
+            <option value="">全部状态</option>
+            <option value="merged">merged</option>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+          </select>
+          <select value={authorFilter} onChange={(event) => setAuthorFilter(event.target.value)} aria-label="按提交作者过滤">
+            <option value="">全部作者</option>
+            {authors.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索编号 / 标题 / 分支" />
+          <button className="secondary-button" onClick={() => void exportXlsx()} disabled={exporting}>
+            <Download size={16} />{exporting ? "生成中…" : "导出 xlsx"}
+          </button>
+        </div>
+        <div className="table-wrap record-table">
           <table>
             <thead><tr>
-              <th>编号</th><th>标题</th><th>状态</th><th>提交作者</th><th>耗时(h)</th><th>+/-</th><th>文件</th><th>关联任务</th>
+              <th>编号</th><th>标题</th><th>状态</th><th>提交作者</th><th>创建</th><th>合并</th><th>耗时(h)</th><th>+/-</th><th>文件</th><th>关联任务</th>
             </tr></thead>
             <tbody>
-              {filtered.slice(0, 400).map((item) => (
+              {filtered.slice(0, 500).map((item) => (
                 <tr key={item.number}>
                   <td>!{item.number}</td>
-                  <td><div className="cell-main" style={{ maxWidth: 380 }}>{item.title}</div><small>{item.createdAt?.slice(0, 10)} · {item.authorLogin ?? "—"}</small></td>
-                  <td>{stateBadge(item.state)}</td>
+                  <td><div className="cell-main" style={{ maxWidth: 360 }}>{item.title}</div><small>{item.authorLogin ?? "—"}</small></td>
+                  <td><span className={`badge ${item.state === "merged" ? "status-passed" : item.state === "open" ? "status-running" : "status-blocked"}`}>{item.state}</span></td>
                   <td>{item.authorNames.join("、") || <small>未识别</small>}</td>
+                  <td><small>{item.createdAt?.slice(0, 10) ?? "—"}</small></td>
+                  <td><small>{item.mergedAt?.slice(0, 10) ?? "—"}</small></td>
                   <td>{item.hoursToMerge ?? "—"}</td>
                   <td><small>+{item.additions}/-{item.deletions}</small></td>
                   <td>{item.fileCount}</td>
@@ -532,9 +637,9 @@ function PullDetailTable({ details }: { details: PullDetail[] }) {
             </tbody>
           </table>
         </div>
-      )}
-      {filtered.length > 400 && <p className="detail-note" style={{ padding: "8px 0 0" }}>仅显示前 400 条，完整数据请导出 xlsx。</p>}
-    </section>
+        <p className="detail-note">作者按提交署名邮箱解析（Merge 同步提交不计）；一条 PR 多个作者时每人各计一次。完整数据请导出 xlsx。</p>
+      </div>
+    </Modal>
   );
 }
 

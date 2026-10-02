@@ -751,3 +751,64 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 .progress-detail .filter-bar input { min-width: 220px; }
 .progress-detail td { font-size: 12.5px; }
 .progress-detail .cell-main { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- 个人成长轨迹 v2 ---------- */
+.progress-people { display: grid; grid-template-columns: 256px minmax(0, 1fr); gap: 16px; align-items: start; }
+.progress-member-list { display: flex; flex-direction: column; max-height: 72vh; overflow-y: auto; }
+.member-row { display: flex; gap: 10px; align-items: center; width: 100%; padding: 10px 14px; border: 0; border-left: 3px solid transparent; background: transparent; cursor: pointer; text-align: left; }
+.member-row:hover { background: #f2f6f7; }
+.member-row.active { background: #e8f1f5; border-left-color: #2f7fa8; }
+.member-avatar { width: 34px; height: 34px; border-radius: 50%; background: #dfe9ee; color: #33586a; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
+.member-avatar.large { width: 46px; height: 46px; font-size: 18px; }
+.member-copy { display: flex; flex-direction: column; min-width: 0; }
+.member-copy strong { font-size: 13.5px; }
+.member-copy small { color: #6b7f88; font-size: 11.5px; }
+.progress-person { display: flex; flex-direction: column; gap: 18px; }
+.progress-person-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.progress-person-id { display: flex; gap: 12px; align-items: center; }
+.progress-person-id h2 { margin: 0 0 2px; font-size: 18px; }
+.progress-person-id p { margin: 0; color: #6b7f88; font-size: 12.5px; }
+.progress-person-actions { display: flex; gap: 10px; align-items: center; }
+.task-progress { display: flex; flex-direction: column; gap: 6px; }
+.task-progress-track { height: 10px; border-radius: 5px; background: #e8eef0; overflow: hidden; }
+.task-progress-track i { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, #57b878, #2e9e5b); }
+.task-progress small { color: #6b7f88; }
+.progress-charts { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+.chart-block { border: 1px solid #e2eaed; border-radius: 10px; padding: 14px 16px; }
+.chart-block h3 { margin: 0 0 12px; font-size: 13.5px; color: #40606e; }
+.bar-chart { display: flex; align-items: flex-end; gap: 8px; height: 150px; padding-top: 6px; }
+.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
+.bar-fill { width: 100%; max-width: 34px; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, #6cc184, #2e9e5b); min-height: 2px; }
+.bar-fill.empty { background: #eef2f3; height: 2px !important; }
+.bar-value { font-size: 11px; color: #40606e; }
+.bar-col small { font-size: 10px; color: #8fa2ab; }
+.mix-bar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: #eef2f3; }
+.mix-doc { background: #57b878; }
+.mix-code { background: #3f8fb0; }
+.mix-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 12.5px; color: #40606e; }
+.mix-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; }
+.mix-dot-doc { background: #57b878; }
+.mix-dot-code { background: #3f8fb0; }
+.heatmap2 { display: inline-block; }
+.heatmap2-grid { display: flex; flex-direction: column; gap: 4px; }
+.heatmap2-row { display: flex; gap: 4px; align-items: center; }
+.heatmap2-day { width: 22px; font-size: 11px; color: #7b8e98; text-align: center; }
+.heatmap2-hour { width: 18px; font-size: 9.5px; color: #9aa9b1; text-align: left; }
+.heatmap2-cell { width: 18px; height: 18px; border-radius: 4px; background: #eef2f3; }
+.heatmap2-cell.l1 { background: #cdeecd; }
+.heatmap2-cell.l2 { background: #a3dcab; }
+.heatmap2-cell.l3 { background: #6cc184; }
+.heatmap2-cell.l4 { background: #2e9e5b; }
+.heatmap2-footer { display: flex; justify-content: space-between; margin-top: 10px; font-size: 11.5px; color: #7b8e98; }
+.heatmap2-legend { display: inline-flex; align-items: center; gap: 3px; }
+.modal-wide { width: min(1150px, 94vw); max-width: 94vw; }
+.modal-wide .modal-body { max-height: calc(88vh - 110px); overflow: auto; }
+.record-toolbar { display: flex; gap: 10px; align-items: center; padding-bottom: 12px; flex-wrap: wrap; }
+.record-toolbar select, .record-toolbar input { padding: 7px 10px; border: 1px solid #d5dee2; border-radius: 8px; font-size: 13px; background: #fff; }
+.record-toolbar input { min-width: 220px; }
+.record-table th { position: sticky; top: 0; background: #fff; z-index: 1; }
+@media (max-width: 900px) {
+  .progress-people { grid-template-columns: 1fr; }
+  .progress-charts { grid-template-columns: 1fr; }
+  .progress-group { min-width: 210px; flex-basis: 210px; }
+}

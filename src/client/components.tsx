@@ -149,7 +149,7 @@ export function HelpTooltip({ label, children }: { label: string; children: Reac
   );
 }
 
-export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function Modal({ title, children, onClose, wide }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -160,7 +160,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
   }, [onClose]);
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
+      <section className={wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header">
           <h2 id={titleId}>{title}</h2>
           <button ref={closeRef} className="icon-button" onClick={onClose} title="关闭" aria-label="关闭">×</button>
