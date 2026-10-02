@@ -252,6 +252,10 @@ ensureColumn("impacts", "reason_code", "TEXT");
 // 评论类 WebHook 只给 noteable_id（Gitee 数据库 id），要靠它反查 PR 编号
 ensureColumn("pull_requests", "remote_id", "INTEGER");
 
+// PR 的真实提交作者（[{name,email}]，来自 PR 内提交的署名）。
+// Gitee 账号是共用的/代操作的，author_login 不代表作者；NULL=未回填，[]=回填过但没有可用署名
+ensureColumn("pull_requests", "authors_json", "TEXT");
+
 // 进度页：group_name 标记任务所属顶层模块（NULL = 顶层模块本身）；身份别名表对齐
 // Gitee 账号 / git 署名 / 匿名用户名（如 用户205243）到真实成员
 ensureColumn("modules", "group_name", "TEXT");

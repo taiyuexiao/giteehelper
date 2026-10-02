@@ -8,7 +8,7 @@ import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
 import { backfillEventFiles, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
-import { backfillMergedFiles } from "../server/progress.js";
+import { backfillMergedFiles, backfillPullAuthors } from "../server/progress.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
@@ -240,6 +240,14 @@ async function main() {
       }));
       return 0;
     }
+    case "backfill-pull-authors": {
+      // 回填 PR 的真实提交作者（PR 内 commit 署名邮箱）。登录账号是共用/代操作的，
+      // author_login 不代表作者；人员指标按这个归属。分块可续跑，默认 --max=100。
+      printJson(await backfillPullAuthors({
+        max: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || 100
+      }));
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -281,6 +289,7 @@ Commands:
   giteehelper backfill-files
   giteehelper backfill-pull-head [--apply]
   giteehelper backfill-merged-files [--max=N]
+  giteehelper backfill-pull-authors [--max=N]
   giteehelper rfc-sync
   giteehelper rfc-coverage
   giteehelper rfc-apply [--apply]

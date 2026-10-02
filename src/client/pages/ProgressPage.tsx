@@ -29,9 +29,9 @@ type BoardData = {
 
 type PersonMetrics = {
   userId: number; name: string; tasksOwned: number; tasksDone: number;
-  mergedPrs: number; sharedMergedPrs: number; openPrs: number; docPrs: number; codePrs: number;
+  mergedPrs: number; openPrs: number; docPrs: number; codePrs: number;
   additions: number; deletions: number; avgMergeHours: number | null;
-  commitCount: number; heat: number[][]; referencedBy: number; referencesOut: number; logins: string[];
+  commitCount: number; heat: number[][]; referencedBy: number; referencesOut: number; emails: string[];
 };
 
 type IdentitySuggestion = { login: string; prs: number; resolvedTo: number | null; resolvedName: string | null; sampleNames: string[] };
@@ -76,7 +76,7 @@ function Wizard({ onDone }: { onDone: () => void }) {
     setBusy(true); setError(""); setMessage("");
     try {
       const result = await api<{ pulls: number }>("/gitee/sync-pulls", { method: "POST", body: JSON.stringify({ withFiles: true }) });
-      setMessage(`已同步 ${result.pulls} 个 PR，开始回填历史文件…`);
+      setMessage(`已同步 ${result.pulls} 个 PR，开始回填历史文件与提交作者…`);
       await runBackfill();
       setStep(2);
     } catch (reason) {
@@ -90,6 +90,15 @@ function Wizard({ onDone }: { onDone: () => void }) {
     let total = 0;
     for (let round = 0; round < 40; round += 1) {
       const result = await api<{ fetched: number; remaining: number }>("/progress/backfill-files", {
+        method: "POST", body: JSON.stringify({ max: 40 })
+      });
+      total += result.fetched;
+      setBackfill({ done: total, remaining: result.remaining });
+      if (result.remaining === 0) break;
+    }
+    total = 0;
+    for (let round = 0; round < 40; round += 1) {
+      const result = await api<{ fetched: number; remaining: number }>("/progress/backfill-authors", {
         method: "POST", body: JSON.stringify({ max: 40 })
       });
       total += result.fetched;
@@ -413,16 +422,16 @@ function People({ people }: { people: PersonMetrics[] }) {
       </aside>
       <article className="panel progress-person">
         <div className="panel-header">
-          <div><h2>{selected.name}</h2><p>Gitee 账号：{selected.logins.join("、") || "未对齐"}</p></div>
+          <div><h2>{selected.name}</h2><p>提交邮箱：{selected.emails.join("、") || "未对齐"}</p></div>
           <span className={`badge ${selected.tasksDone === selected.tasksOwned && selected.tasksOwned > 0 ? "status-passed" : "status-clarification"}`}>
             {selected.tasksDone}/{selected.tasksOwned} 任务完成
           </span>
         </div>
         <section className="metric-grid">
-          <article className="metric"><span>独立合并 PR</span><strong>{selected.mergedPrs}</strong><RefreshCw size={19} /></article>
-          <article className="metric"><span>跨人协作 PR</span><strong>{selected.sharedMergedPrs}</strong><Users size={19} /></article>
+          <article className="metric"><span>合并 PR</span><strong>{selected.mergedPrs}</strong><RefreshCw size={19} /></article>
           <article className="metric"><span>在飞 PR</span><strong>{selected.openPrs}</strong><RefreshCw size={19} /></article>
-          <article className="metric"><span>代码量（独立）</span><strong>+{selected.additions}/-{selected.deletions}</strong><ClipboardList size={19} /></article>
+          <article className="metric"><span>文档 / 代码 PR</span><strong>{selected.docPrs} / {selected.codePrs}</strong><ClipboardList size={19} /></article>
+          <article className="metric"><span>代码量</span><strong>+{selected.additions}/-{selected.deletions}</strong><ClipboardList size={19} /></article>
           <article className="metric"><span>平均合并时长</span><strong>{selected.avgMergeHours === null ? "—" : `${selected.avgMergeHours} 小时`}</strong><RefreshCw size={19} /></article>
           <article className="metric"><span>被 ! 引用</span><strong>{selected.referencedBy}</strong><Users size={19} /></article>
         </section>

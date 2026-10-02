@@ -17,6 +17,7 @@ import { config } from "./config.js";
 import { execute, parseJson, queryAll, queryOne } from "./db.js";
 import { isOperationalModule, wildcardMatch } from "./impact.js";
 import { fetchPullFiles } from "./pulls.js";
+import { fetchPullRequestCommits, pickHeadCommit } from "./gitee.js";
 
 export type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
 
@@ -426,10 +427,56 @@ export async function backfillMergedFiles(
   return { fetched, remaining, skipped };
 }
 
+/**
+ * 给 PR 回填真实提交作者（[{name,email}]）。
+ *
+ * 为什么需要：这个团队除顾乡、康旭外都用刘成彦的账号登录 Gitee 操作，
+ * author_login 完全不代表作者；但 PR 内提交的作者邮箱是每个人自己的，
+ * 与 .githooks/contributors.tsv 名册一致。合并同步类的 Merge 提交不算作者，
+ * 全是 Merge 时退回 head 提交的作者。NULL=未回填，[]=回填过但无可用署名。
+ */
+export async function backfillPullAuthors(
+  options: { max?: number } = {},
+  projectId = 1
+): Promise<{ fetched: number; remaining: number }> {
+  const max = Math.max(1, Math.min(options.max ?? 40, 200));
+  if (!config.giteeRepo || !config.giteeToken) throw new Error("GITEE_TOKEN 与 GITEE_REPO 未配置");
+  const pending = queryAll<{ number: number; headSha: string | null }>(
+    `SELECT number, head_sha AS headSha FROM pull_requests
+     WHERE project_id = ? AND authors_json IS NULL ORDER BY number DESC LIMIT ?`,
+    [projectId, max]
+  );
+  for (const row of pending) {
+    const commits = await fetchPullRequestCommits(config.giteeRepo, row.number, { perPage: 100, maxPages: 3 })
+      .catch(() => [] as Awaited<ReturnType<typeof fetchPullRequestCommits>>);
+    const authors: Array<{ name: string | null; email: string | null }> = [];
+    const seen = new Set<string>();
+    for (const commit of commits) {
+      if (/^merge\b/i.test(commit.message)) continue;
+      const key = `${commit.name ?? ""}|${commit.email ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      authors.push({ name: commit.name, email: commit.email });
+    }
+    if (!authors.length && commits.length) {
+      // 全是合并同步提交：退回这次真正推进的 head 提交的作者
+      const head = pickHeadCommit(commits, row.headSha);
+      if (head) authors.push({ name: head.name, email: head.email });
+    }
+    execute(`UPDATE pull_requests SET authors_json = ? WHERE project_id = ? AND number = ?`,
+      [JSON.stringify(authors), projectId, row.number]);
+  }
+  const remaining = queryOne<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = ? AND authors_json IS NULL`, [projectId]
+  )?.c ?? 0;
+  return { fetched: pending.length, remaining };
+}
+
 /* ---------- 身份：Gitee 账号 / git 署名 / 邮箱 → 人 ---------- */
 
 export interface UserIndex {
   byLogin: Map<string, number>;
+  byEmail: Map<string, number>;
   namesByLogin: Map<string, string[]>;
   resolveCommit(login: string | null, name: string | null, email: string | null): number | null;
 }
@@ -471,6 +518,7 @@ export function buildUserIndex(projectId = 1): UserIndex {
 
   return {
     byLogin,
+    byEmail,
     namesByLogin,
     resolveCommit(login, name, email) {
       if (login && byLogin.has(login)) return byLogin.get(login)!;
@@ -491,10 +539,8 @@ export interface PersonMetrics {
   name: string;
   tasksOwned: number;
   tasksDone: number;
-  /** 独占合并 PR：关联任务的负责人只有他一个人 */
+  /** 她是提交作者（PR 内 commit 署名邮箱解析）的 merged PR 数 */
   mergedPrs: number;
-  /** 跨人协作 PR：一条 PR 关联了多个人的任务（共享 RFC/代码面的常态），不重复计入任何人的独立数 */
-  sharedMergedPrs: number;
   openPrs: number;
   docPrs: number;
   codePrs: number;
@@ -506,7 +552,8 @@ export interface PersonMetrics {
   heat: number[][];
   referencedBy: number;
   referencesOut: number;
-  logins: string[];
+  /** 解析到本人的提交邮箱（别名表 + users.email） */
+  emails: string[];
 }
 
 function toStamp(value: string | null | undefined): number {
@@ -519,31 +566,21 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
   const index = buildUserIndex(projectId);
   const board = buildBoard(projectId);
   /**
-   * PR 归属到人：这个团队的 Gitee 账号是共用的（gux12 推了 254 个 PR），
-   * 按 PR 署名归属会把所有人的工作算到一个人头上。因此归属走
-   * 「PR → 关联任务（三级证据）→ 任务负责人」。一条 PR 关联多个人的任务时
-   * （共享 RFC/代码面的常态）不算任何人的独占数，如实标为跨人协作。
+   * PR 归属到人 = 按 PR 内提交的作者邮箱（backfill-pull-authors 回填）。
+   * 团队约定：除顾乡、康旭外大家都用刘成彦的账号登录操作，author_login
+   * 不代表作者；提交署名邮箱才是本人（与 contributors.tsv 名册一致）。
+   * 一条 PR 有多个作者时（如联修）每人各计一次；Merge 同步提交不算作者。
    */
-  const pullOwners = new Map<number, Set<number>>();
-  for (const group of board.groups) {
-    for (const task of group.tasks) {
-      for (const pull of task.pulls) {
-        const owners = pullOwners.get(pull.number) ?? new Set<number>();
-        if (task.ownerUserId) owners.add(task.ownerUserId);
-        pullOwners.set(pull.number, owners);
-      }
-    }
-  }
   const pulls = queryAll<Record<string, unknown>>(
-    `SELECT number, state, title, author_login AS authorLogin, created_at AS createdAt, merged_at AS mergedAt,
-            additions, deletions, files_json AS filesJson
+    `SELECT number, state, title, created_at AS createdAt, merged_at AS mergedAt,
+            additions, deletions, files_json AS filesJson, authors_json AS authorsJson
      FROM pull_requests WHERE project_id = ?`, [projectId]
-  ).map((row): PullCore & { kind: PullKind } => ({
+  ).map((row): PullCore & { kind: PullKind; authors: Array<{ name: string | null; email: string | null }> } => ({
     number: Number(row.number),
     title: String(row.title ?? ""),
     body: String(row.body ?? ""),
     state: String(row.state ?? ""),
-    authorLogin: (row.authorLogin as string | null) ?? null,
+    authorLogin: null,
     url: null,
     createdAt: (row.createdAt as string | null) ?? null,
     updatedAt: (row.updatedAt as string | null) ?? null,
@@ -551,8 +588,18 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
     additions: Number(row.additions ?? 0) || 0,
     deletions: Number(row.deletions ?? 0) || 0,
     files: parseJson<string[]>(row.filesJson, []),
-    kind: classifyPullKind(parseJson<string[]>(row.filesJson, []), String(row.title ?? ""))
+    kind: classifyPullKind(parseJson<string[]>(row.filesJson, []), String(row.title ?? "")),
+    authors: parseJson<Array<{ name: string | null; email: string | null }>>(row.authorsJson, [])
   }));
+  const pullAuthorUsers = new Map<number, number[]>();
+  for (const pull of pulls) {
+    const ids = new Set<number>();
+    for (const author of pull.authors) {
+      const userId = index.resolveCommit(null, author.name, author.email);
+      if (userId) ids.add(userId);
+    }
+    pullAuthorUsers.set(pull.number, [...ids]);
+  }
   const commits = queryAll<{ login: string | null; name: string | null; email: string | null; committedAt: string | null }>(
     `SELECT author_login AS login, author_name AS name, author_email AS email, committed_at AS committedAt
      FROM commits WHERE project_id = ?`, [projectId]
@@ -562,21 +609,15 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
   );
 
   const metrics: PersonMetrics[] = [];
-  for (const row of queryAll<{ id: number; displayName: string }>(`SELECT id, display_name AS displayName FROM users WHERE active = 1 ORDER BY id`)) {
+  for (const row of queryAll<{ id: number; displayName: string; email: string | null }>(
+    `SELECT id, display_name AS displayName, email FROM users WHERE active = 1 ORDER BY id`
+  )) {
     const owned = board.groups.flatMap((group) => group.tasks).filter((task) => task.ownerUserId === row.id);
-    const involved = pulls.filter((pull) => (pullOwners.get(pull.number)?.size ?? 0) > 0);
-    const exclusive = involved.filter((pull) => {
-      const owners = pullOwners.get(pull.number)!;
-      return owners.size === 1 && owners.has(row.id);
-    });
-    const logins = [...new Set(involved.map((pull) => pull.authorLogin).filter(Boolean) as string[])];
+    const personPulls = pulls.filter((pull) => pullAuthorUsers.get(pull.number)?.includes(row.id));
     const personCommits = commits.filter((commit) => index.resolveCommit(commit.login, commit.name, commit.email) === row.id);
-    const pullNumbers = new Set(involved.map((pull) => pull.number));
-    const merged = exclusive.filter((pull) => pull.state === "merged");
-    const sharedMergedPrs = involved.filter((pull) => {
-      const owners = pullOwners.get(pull.number)!;
-      return pull.state === "merged" && owners.size > 1 && owners.has(row.id);
-    }).length;
+    const pullNumbers = new Set(personPulls.map((pull) => pull.number));
+    const merged = personPulls.filter((pull) => pull.state === "merged");
+    const emails = [...index.byEmail.entries()].filter(([, userId]) => userId === row.id).map(([email]) => email);
     const mergeHours = merged
       .map((pull) => (toStamp(pull.mergedAt) - toStamp(pull.createdAt)) / 3_600_000)
       .filter((hours) => Number.isFinite(hours) && hours >= 0);
@@ -594,12 +635,11 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
       tasksOwned: owned.length,
       tasksDone: owned.filter((task) => task.state === "done").length,
       mergedPrs: merged.length,
-      sharedMergedPrs,
-      openPrs: involved.filter((pull) => pull.state === "open" && pullOwners.get(pull.number)!.has(row.id)).length,
-      docPrs: exclusive.filter((pull) => pull.kind === "doc").length,
-      codePrs: exclusive.filter((pull) => pull.kind !== "doc").length,
-      additions: exclusive.reduce((sum, pull) => sum + pull.additions, 0),
-      deletions: exclusive.reduce((sum, pull) => sum + pull.deletions, 0),
+      openPrs: personPulls.filter((pull) => pull.state === "open").length,
+      docPrs: personPulls.filter((pull) => pull.kind === "doc").length,
+      codePrs: personPulls.filter((pull) => pull.kind !== "doc").length,
+      additions: personPulls.reduce((sum, pull) => sum + pull.additions, 0),
+      deletions: personPulls.reduce((sum, pull) => sum + pull.deletions, 0),
       avgMergeHours: mergeHours.length
         ? Math.round(mergeHours.reduce((sum, hours) => sum + hours, 0) / mergeHours.length)
         : null,
@@ -607,7 +647,7 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
       heat,
       referencedBy: references.filter((ref) => pullNumbers.has(ref.toNumber)).length,
       referencesOut: references.filter((ref) => pullNumbers.has(ref.fromNumber)).length,
-      logins
+      emails
     });
   }
   // 有 PR/提交但身份没对上的人也会在向导第三步处理；这里只返回能对上身份的成员

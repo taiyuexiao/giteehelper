@@ -14,7 +14,7 @@ import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncR
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import {
-  applyAssignment, backfillMergedFiles, buildBoard, buildPeople, identitySuggestions,
+  applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, identitySuggestions,
   parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -907,8 +907,21 @@ router.get("/progress/status", requireAuth, (_req, res) => {
   const missing = queryOne<{ c: number }>(
     `SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1 AND state = 'merged' AND files_json = '[]'`
   )?.c ?? 0;
+  const missingAuthors = queryOne<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1 AND authors_json IS NULL`
+  )?.c ?? 0;
   const pulls = queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1`)?.c ?? 0;
-  res.json({ missingMergedFiles: missing, pulls });
+  res.json({ missingMergedFiles: missing, missingAuthors, pulls });
+});
+
+router.post("/progress/backfill-authors", requireAuth, requireAdmin, async (req, res) => {
+  // 与文件回填一样分块可续跑：每次最多 max 条，调用方循环到 remaining 为 0
+  const max = Math.min(Number((req.body as Record<string, unknown> | undefined)?.max) || 40, 200);
+  try {
+    res.json(await backfillPullAuthors({ max }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "backfill failed" });
+  }
 });
 
 router.post("/progress/backfill-files", requireAuth, requireAdmin, async (req, res) => {
