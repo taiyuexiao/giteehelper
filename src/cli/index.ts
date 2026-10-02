@@ -8,7 +8,7 @@ import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
 import { backfillEventFiles, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
-import { backfillMergedFiles, backfillPullAuthors } from "../server/progress.js";
+import { aiAssociatePulls, backfillMergedFiles, backfillPullAuthors } from "../server/progress.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
@@ -240,6 +240,14 @@ async function main() {
       }));
       return 0;
     }
+    case "ai-associate": {
+      // 规则证据覆盖不到的 PR 交给大模型判断任务归属，落库为「AI 识别」级证据。
+      // 分块可续跑：每次最多 --max 条（默认 30），重复执行直到 remaining 为 0。
+      printJson(await aiAssociatePulls({
+        max: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || 30
+      }));
+      return 0;
+    }
     case "backfill-pull-authors": {
       // 回填 PR 的真实提交作者（PR 内 commit 署名邮箱）。登录账号是共用/代操作的，
       // author_login 不代表作者；人员指标按这个归属。分块可续跑，默认 --max=100。
@@ -290,6 +298,7 @@ Commands:
   giteehelper backfill-pull-head [--apply]
   giteehelper backfill-merged-files [--max=N]
   giteehelper backfill-pull-authors [--max=N]
+  giteehelper ai-associate [--max=N]
   giteehelper rfc-sync
   giteehelper rfc-coverage
   giteehelper rfc-apply [--apply]

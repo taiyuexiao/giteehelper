@@ -812,3 +812,4 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
   .progress-charts { grid-template-columns: 1fr; }
   .progress-group { min-width: 210px; flex-basis: 210px; }
 }
+.ai-tag { font-style: normal; font-size: 10px; color: #8a6d1f; background: #f6ecd2; border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }

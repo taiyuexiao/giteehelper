@@ -61,6 +61,9 @@ export interface Association {
   evidence: "ref" | "rfc" | "path";
 }
 
+/** 看板关联证据：ref/rfc/path 为确定性规则，ai 为大模型补充识别（可审计） */
+export type EvidenceKind = Association["evidence"] | "ai";
+
 const WORK_REF_RE = /\b([A-Za-z]{2,10}-\d{1,6})\b/g;
 const DOCS_PATH_RE = /^docs\//i;
 const RFC_SLUG_RES = [
@@ -217,6 +220,8 @@ export interface BoardTaskPull {
   url: string | null;
   mergedAt: string | null;
   authorLogin: string | null;
+  /** ref/rfc/path = 确定性证据；ai = 大模型补充识别（可审计） */
+  evidence: EvidenceKind;
 }
 
 export interface BoardTask {
@@ -319,14 +324,27 @@ export function buildBoard(projectId = 1): BoardData {
     files: parseJson<string[]>(row.filesJson, [])
   }));
 
-  const byModule = new Map<number, Array<{ kind: PullKind; pull: PullCore }>>();
+  const byModule = new Map<number, Array<{ kind: PullKind; pull: PullCore; evidence: EvidenceKind }>>();
   for (const pull of pulls) {
     for (const association of associatePull(pull, tasks, rfcIndex)) {
       const kind = classifyPullKind(pull.files, pull.title);
       const list = byModule.get(association.moduleId) ?? [];
-      list.push({ kind, pull });
+      list.push({ kind, pull, evidence: association.evidence });
       byModule.set(association.moduleId, list);
     }
+  }
+  // AI 补充关联：规则证据（ref/rfc/path）覆盖不到的 PR，由大模型判断并落库（pull_task_ai），
+  // 看板中标为「AI 识别」级证据，与确定性证据区分
+  for (const row of queryAll<{ pullNumber: number; moduleId: number }>(
+    `SELECT pull_number AS pullNumber, module_id AS moduleId FROM pull_task_ai WHERE project_id = ?`, [projectId]
+  )) {
+    const pull = pulls.find((item) => item.number === row.pullNumber);
+    if (!pull || !tasks.some((task) => task.id === row.moduleId)) continue;
+    if (associatePull(pull, tasks, rfcIndex).length) continue; // 规则证据优先
+    const kind = classifyPullKind(pull.files, pull.title);
+    const list = byModule.get(row.moduleId) ?? [];
+    list.push({ kind, pull, evidence: "ai" });
+    byModule.set(row.moduleId, list);
   }
 
   const userNameById = new Map<number, string>();
@@ -380,7 +398,8 @@ export function buildBoard(projectId = 1): BoardData {
           kind: item.kind,
           url: item.pull.url,
           mergedAt: item.pull.mergedAt,
-          authorLogin: item.pull.authorLogin
+          authorLogin: item.pull.authorLogin,
+          evidence: item.evidence
         }))
     };
     const top = matchTop(groupName);
@@ -997,4 +1016,144 @@ export function upsertIdentityAlias(alias: string, userId: number, projectId = 1
     [projectId, alias.trim(), userId]
   );
   return { ok: true };
+}
+
+/* ---------- AI 补充关联（规则证据覆盖不到的 PR） ---------- */
+
+/**
+ * 用大模型给规则证据（ref/rfc/path）覆盖不到的 PR 判断任务归属。
+ * 结果落库 pull_task_ai，看板标为「AI 识别」级证据——与确定性证据区分、可审计。
+ * 无把握的 PR 也记一行（module_id 为空），避免每次重复请求。
+ */
+export async function aiAssociatePulls(
+  options: { max?: number } = {},
+  projectId = 1
+): Promise<{ scanned: number; linked: number; remaining: number }> {
+  const max = Math.max(1, Math.min(options.max ?? 30, 100));
+  if (!config.llmApiKey || !config.llmApiBase) throw new Error("未配置大模型（LLM_API_BASE / LLM_API_KEY）");
+
+  const taskRows = queryAll<{ id: number; moduleKey: string; name: string; groupName: string | null; description: string | null; key2: string | null }>(
+    `SELECT m.id, m.module_key AS moduleKey, m.name, m.group_name AS groupName, m.description, m.module_key AS key2
+     FROM modules m WHERE m.project_id = ?`, [projectId]
+  ).filter((row) => isOperationalModule(row));
+  const tasks: TaskModule[] = taskRows
+    .map((row) => ({
+      id: row.id,
+      key: row.moduleKey,
+      name: row.name,
+      ownerUserId: null,
+      paths: [],
+      group: groupOf({ key: row.moduleKey, group: row.groupName, description: row.description })
+    }))
+    .filter((task) => task.group !== null);
+  if (!tasks.length) return { scanned: 0, linked: 0, remaining: 0 };
+
+  const rfcIndex = new Map<string, string[]>();
+  for (const contract of queryAll<{ slug: string; workRefsJson: string }>(
+    `SELECT slug, work_refs_json AS workRefsJson FROM rfc_contracts WHERE project_id = ?`, [projectId]
+  )) {
+    rfcIndex.set(
+      contract.slug.toLowerCase(),
+      parseJson<string[]>(contract.workRefsJson, []).map((ref) => `work-${ref.toLowerCase()}`)
+    );
+  }
+
+  const pulls = queryAll<Record<string, unknown>>(
+    `SELECT number, title, body, state, head_ref AS headRef, files_json AS filesJson
+     FROM pull_requests WHERE project_id = ?`, [projectId]
+  ).map((row): PullCore => ({
+    number: Number(row.number),
+    title: String(row.title ?? ""),
+    body: String(row.body ?? "").slice(0, 800),
+    state: String(row.state ?? ""),
+    authorLogin: null,
+    url: null,
+    headRef: (row.headRef as string | null) ?? null,
+    createdAt: null,
+    updatedAt: null,
+    mergedAt: null,
+    additions: 0,
+    deletions: 0,
+    files: parseJson<string[]>(row.filesJson, []).slice(0, 25)
+  }));
+
+  const exactLinked = new Set<number>();
+  for (const pull of pulls) {
+    if (associatePull(pull, tasks, rfcIndex).length) exactLinked.add(pull.number);
+  }
+  const processed = new Set<number>();
+  for (const row of queryAll<{ pullNumber: number }>(
+    `SELECT DISTINCT pull_number AS pullNumber FROM pull_task_ai WHERE project_id = ?`, [projectId]
+  )) {
+    processed.add(row.pullNumber);
+  }
+  const unlinked = pulls.filter(
+    (pull) => (pull.state === "merged" || pull.state === "open") && !exactLinked.has(pull.number) && !processed.has(pull.number)
+  );
+  const targets = unlinked.slice(0, max);
+  const taskList = tasks.map((task) => `- ${task.key}  ${task.group}·${task.name}`).join("\n");
+
+  let linked = 0;
+  for (const pull of targets) {
+    const userContent = [
+      `任务清单：`, taskList,
+      ``, `PR 信息：`,
+      `标题：${pull.title}`,
+      `分支：${pull.headRef ?? "无"}`,
+      pull.body ? `描述：${pull.body.slice(0, 400)}` : "",
+      pull.files.length ? `变更文件：\n${pull.files.join("\n")}` : "变更文件：无"
+    ].filter(Boolean).join("\n");
+    let keys: string[] = [];
+    try {
+      const response = await fetch(`${config.llmApiBase}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.llmApiKey}` },
+        body: JSON.stringify({
+          model: config.llmModel,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                '你是研发任务归属判定器。给你任务清单和一个 PR（标题/分支/变更文件），判断 PR 属于哪些任务。只输出有把握的匹配（分支名、文件路径或标题与任务名/RFC 主题明显对应），最多 3 个；没有把握输出空数组。禁止凭任务清单里没有的编号猜。只输出 JSON：{"tasks":[{"key":"任务key"}]}'
+            },
+            { role: "user", content: userContent }
+          ],
+          temperature: 0,
+          max_tokens: 300,
+          signal: AbortSignal.timeout(60_000)
+        })
+      });
+      if (!response.ok) continue;
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const raw = data.choices?.[0]?.message?.content?.trim() ?? "{}";
+      const parsed = JSON.parse(raw.replace(/^```(?:json)?/m, "").replace(/```$/m, "").trim()) as { tasks?: Array<{ key?: string }> };
+      keys = (parsed.tasks ?? []).map((item) => String(item.key ?? "").toLowerCase()).filter(Boolean).slice(0, 3);
+    } catch {
+      continue; // 网络或解析失败：不落库，下次重试
+    }
+    let matched = 0;
+    for (const key of keys) {
+      const task = tasks.find((item) => item.key === key);
+      if (!task) continue;
+      execute(
+        `INSERT INTO pull_task_ai (project_id, pull_number, module_id) VALUES (?, ?, ?)
+         ON CONFLICT(project_id, pull_number, module_id) DO NOTHING`,
+        [projectId, pull.number, task.id]
+      );
+      matched += 1;
+    }
+    if (!matched) {
+      // 无把握也要记“已判断”，否则每次都会重试同一个 PR
+      execute(
+        `INSERT INTO pull_task_ai (project_id, pull_number, module_id)
+         SELECT ?, ?, NULL WHERE NOT EXISTS (SELECT 1 FROM pull_task_ai WHERE project_id = ? AND pull_number = ? AND module_id IS NULL)`,
+        [projectId, pull.number, projectId, pull.number]
+      );
+    } else {
+      linked += 1;
+    }
+  }
+  const remaining = unlinked.filter((pull) => !processed.has(pull.number) && !targets.includes(pull)).length;
+  return { scanned: targets.length, linked, remaining };
 }

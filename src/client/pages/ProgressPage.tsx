@@ -14,7 +14,7 @@ const STATE_LABELS: Record<TaskState, string> = {
   done: "已完成"
 };
 
-type BoardTaskPull = { number: number; title: string; state: string; kind: string; url: string | null; mergedAt: string | null; authorLogin: string | null };
+type BoardTaskPull = { number: number; title: string; state: string; kind: string; url: string | null; mergedAt: string | null; authorLogin: string | null; evidence: string };
 type BoardTask = {
   moduleId: number; key: string; name: string; ownerUserId: number | null; ownerName: string | null;
   state: TaskState; docMerged: number; docOpen: number; codeMerged: number; codeOpen: number;
@@ -374,7 +374,7 @@ function TaskDrawer({ task, onClose }: { task: BoardTask; onClose: () => void })
         {merged.length > 0 && <h3>已合并</h3>}
         {merged.map((pull) => (
           <a key={pull.number} className="progress-pr" href={pull.url ?? "#"} target="_blank" rel="noreferrer">
-            <span>!{pull.number} {pull.title}</span>
+            <span>!{pull.number} {pull.title}{pull.evidence === "ai" && <em className="ai-tag">AI 识别</em>}</span>
             <small>{timeAgo(pull.mergedAt)} · {pull.authorLogin ?? "—"} <ExternalLink size={12} /></small>
           </a>
         ))}

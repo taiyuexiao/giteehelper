@@ -279,6 +279,17 @@ CREATE TABLE IF NOT EXISTS module_group_aliases (
   module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
   UNIQUE(project_id, group_name)
 );
+
+-- 进度页：AI 补充关联（规则证据 ref/rfc/path 覆盖不到的 PR，由大模型判断归属，
+-- 看板里标为「AI 识别」级证据，可审计）。module_id 为 NULL 表示“已判断、无把握”
+CREATE TABLE IF NOT EXISTS pull_task_ai (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  pull_number INTEGER NOT NULL,
+  module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
+  decided_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, pull_number, module_id)
+);
 `);
 
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠

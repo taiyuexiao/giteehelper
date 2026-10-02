@@ -14,8 +14,8 @@ import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncR
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import {
-  applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, buildPullDetails, identitySuggestions,
-  parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
+  aiAssociatePulls, applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, buildPullDetails,
+  identitySuggestions, parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
 import { buildProgressWorkbook } from "./export.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -929,6 +929,16 @@ router.get("/progress/status", requireAuth, (_req, res) => {
   )?.c ?? 0;
   const pulls = queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1`)?.c ?? 0;
   res.json({ missingMergedFiles: missing, missingAuthors, pulls });
+});
+
+router.post("/progress/ai-associate", requireAuth, requireAdmin, async (req, res) => {
+  // 分块执行：每次最多 max 条 PR，调用方循环到 remaining 为 0
+  const max = Math.min(Number((req.body as Record<string, unknown> | undefined)?.max) || 30, 100);
+  try {
+    res.json(await aiAssociatePulls({ max }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "ai associate failed" });
+  }
 });
 
 router.post("/progress/backfill-authors", requireAuth, requireAdmin, async (req, res) => {
