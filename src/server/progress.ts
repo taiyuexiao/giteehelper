@@ -437,7 +437,12 @@ export function buildUserIndex(projectId = 1): UserIndex {
     `SELECT alias, user_id AS userId FROM identity_aliases WHERE project_id = ?`, [projectId]
   )) {
     if (!byLogin.has(row.alias)) byLogin.set(row.alias, row.userId);
-    if (!byName.has(row.alias.trim())) byName.set(row.alias.trim(), row.userId);
+    // 邮箱形态的别名进 byEmail（提交邮箱是最可靠的身份），其余当姓名别名
+    if (row.alias.includes("@")) {
+      if (!byEmail.has(row.alias.toLowerCase())) byEmail.set(row.alias.toLowerCase(), row.userId);
+    } else if (!byName.has(row.alias.trim())) {
+      byName.set(row.alias.trim(), row.userId);
+    }
   }
   // 共用账号问题的正解：login 本身没有区分度，但它在 commits 里对应的作者名有
   const namesByLogin = new Map<string, string[]>();
@@ -496,6 +501,20 @@ function toStamp(value: string | null | undefined): number {
 export function buildPeople(projectId = 1): PersonMetrics[] {
   const index = buildUserIndex(projectId);
   const board = buildBoard(projectId);
+  /**
+   * PR 归属到人：这个团队的 Gitee 账号是共用的（gux12 推了 254 个 PR），
+   * 按 PR 署名归属会把所有人的工作算到一个人头上。因此归属走
+   * 「PR → 关联任务（三级证据）→ 任务负责人」——分工表就是流程事实。
+   * 同一 PR 关联多个任务时归到证据最强的第一个，不重复计数。
+   */
+  const pullOwner = new Map<number, number | null>();
+  for (const group of board.groups) {
+    for (const task of group.tasks) {
+      for (const pull of task.pulls) {
+        if (!pullOwner.has(pull.number)) pullOwner.set(pull.number, task.ownerUserId);
+      }
+    }
+  }
   const pulls = queryAll<Record<string, unknown>>(
     `SELECT number, state, title, author_login AS authorLogin, created_at AS createdAt, merged_at AS mergedAt,
             additions, deletions, files_json AS filesJson
@@ -525,9 +544,9 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
 
   const metrics: PersonMetrics[] = [];
   for (const row of queryAll<{ id: number; displayName: string }>(`SELECT id, display_name AS displayName FROM users WHERE active = 1 ORDER BY id`)) {
-    const logins = [...index.byLogin.entries()].filter(([, userId]) => userId === row.id).map(([login]) => login);
     const owned = board.groups.flatMap((group) => group.tasks).filter((task) => task.ownerUserId === row.id);
-    const personPulls = pulls.filter((pull) => pull.authorLogin && logins.includes(pull.authorLogin));
+    const personPulls = pulls.filter((pull) => pullOwner.get(pull.number) === row.id);
+    const logins = [...new Set(personPulls.map((pull) => pull.authorLogin).filter(Boolean) as string[])];
     const personCommits = commits.filter((commit) => index.resolveCommit(commit.login, commit.name, commit.email) === row.id);
     const pullNumbers = new Set(personPulls.map((pull) => pull.number));
     const merged = personPulls.filter((pull) => pull.state === "merged");
