@@ -28,9 +28,16 @@
 ## 关键文件
 - `src/server/progress.ts`：关联、状态机、回填、人员指标、CSV/LLM 导入解析、别名
 - `src/server/routes.ts` 的 `/api/progress/*`（board/people/status/backfill-files/import/identity）
-- `src/client/pages/ProgressPage.tsx`：全景 + 轨迹 + 向导
+- `src/client/pages/ProgressPage.tsx`：全景 + 轨迹（含 PR 明细表）+ 向导
+- `src/server/export.ts`（xlsx 工作簿生成，exceljs）
 - `tests/progress.test.ts`：分类、编号/slug 提取、三级证据、五态、分组、CSV、带库集成、身份解析
 - CLI：`backfill-merged-files [--max=N]`
+
+## PR 明细与 xlsx 导出
+- 数据源 `buildPullDetails()`：与看板同一套关联结果，作者按提交署名解析（能对上身份显示成员名，否则原文署名）；
+- 入口：「进度 → 个人成长轨迹」底部「PR 明细」面板（状态/作者/关键词筛选，最多渲染 400 行）+「导出 xlsx」按钮（`GET /api/progress/export.xlsx`，带鉴权下载，未登录 401）；
+- 工作簿四张表：PR明细（14 列，冻结首行）/ 按人汇总(提交邮箱) / 按登录账号 / 未识别作者，口径与首版人工分析一致；
+- **实时性**：WebHook 收到 PR 事件时 `enrichPullRequest` 顺带把 PR 落库（`upsertPullFromWebhook`，merge 动作强制 state=merged）并写入真实提交作者——进度数据不再依赖手动 sync-pulls；导出现算，永远是当前状态。
 
 ## Bug 与问题记录
 
@@ -62,3 +69,4 @@
 | 2026-09-29 | 修复汇总丢失/SQL 错位/共享 PR 归属两处失真；生产种入 24 条身份别名 | BUG-001~003 |
 | 2026-09-29 | 修复能力域→顶层模块匹配（前缀+别名表），运行/项目与权限两列负责人（李苑/康旭）回归看板 | 用户反馈：成员少了李苑 |
 | 2026-09-29 | 个人 PR 数改按提交作者归属（backfill-pull-authors 回填 317 条 PR 的署名），师沛琳 4→19；真实信号浮现：厉福超 111 次提交仅 3 个 PR（直推主干）、顾乡 229 个 PR 的作者（评审修正人）、宗杰伦名下 10 任务全部由他人提交完成 | 用户反馈：PR 数对不上 |
+| 2026-09-29 | 个人轨迹内新增 PR 明细表（筛选）与 xlsx 导出（四张表，与人工分析口径一致）；WebHook 的 PR 事件实时落库并写提交作者，进度数据不再依赖手动同步 | 用户需求：xlsx 分析可视化并持续更新 |
