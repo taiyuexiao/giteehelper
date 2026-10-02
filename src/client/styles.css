@@ -813,3 +813,22 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
   .progress-group { min-width: 210px; flex-basis: 210px; }
 }
 .ai-tag { font-style: normal; font-size: 10px; color: #8a6d1f; background: #f6ecd2; border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
+
+/* ---------- 团队全景对比表 ---------- */
+.team-overview { margin-bottom: 16px; }
+.team-overview tbody tr { cursor: pointer; }
+.team-overview tbody tr:hover { background: #f2f7f8; }
+.team-overview tbody tr.active { background: #e8f1f5; }
+.team-overview .member-row.static { cursor: default; padding: 0; }
+.team-overview .member-row.static:hover { background: transparent; }
+.metric-bar { display: flex; align-items: center; gap: 10px; }
+.metric-bar strong { min-width: 42px; font-size: 14px; }
+.metric-bar strong small { color: #7b8e98; font-weight: 500; }
+.metric-track { flex: 1; height: 10px; border-radius: 5px; background: #edf2f4; overflow: hidden; display: flex; }
+.metric-track i { display: block; height: 100%; }
+.fill-merged { background: linear-gradient(90deg, #6cc184, #2e9e5b); }
+.fill-task { background: linear-gradient(90deg, #64a8c9, #2f7fa8); }
+.fill-commit { background: linear-gradient(90deg, #9fb3d9, #5f7fb8); }
+.fill-doc { background: #57b878; }
+.fill-code { background: #3f8fb0; }
+.none-mark { color: #a5b4bc; }

@@ -465,6 +465,69 @@ function Heatmap({ heat }: { heat: number[][] }) {
   );
 }
 
+/* ---------- 团队全景：全员指标对比（合并 PR / 文档代码 / 任务完成 / 提交） ---------- */
+
+function TeamOverview({ people, selectedId, onSelect }: { people: PersonMetrics[]; selectedId: number | null; onSelect: (id: number) => void }) {
+  const maxMerged = Math.max(1, ...people.map((p) => p.mergedPrs));
+  const maxCommits = Math.max(1, ...people.map((p) => p.commitCount));
+  const sorted = [...people].sort((a, b) => b.mergedPrs - a.mergedPrs || b.commitCount - a.commitCount);
+  return (
+    <section className="panel team-overview">
+      <div className="panel-header">
+        <div><h2>团队全景</h2><p>口径：提交署名邮箱（共用登录账号不计数）；条形按列内最大值归一。</p></div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr>
+            <th>成员</th><th style={{ width: "22%" }}>合并 PR</th><th style={{ width: "18%" }}>文档 / 代码</th><th style={{ width: "22%" }}>任务完成</th><th style={{ width: "18%" }}>提交</th>
+          </tr></thead>
+          <tbody>
+            {sorted.map((person) => (
+              <tr key={person.userId} className={selectedId === person.userId ? "active" : ""} onClick={() => onSelect(person.userId)}>
+                <td>
+                  <span className="member-row static">
+                    <span className="member-avatar">{person.name.slice(0, 1)}</span>
+                    <span className="member-copy"><strong>{person.name}</strong><small>{person.emails[0] ?? "未对齐"}</small></span>
+                  </span>
+                </td>
+                <td>
+                  <div className="metric-bar">
+                    <strong>{person.mergedPrs}</strong>
+                    <span className="metric-track"><i className="fill-merged" style={{ width: `${(person.mergedPrs / maxMerged) * 100}%` }} /></span>
+                  </div>
+                </td>
+                <td>
+                  <div className="metric-bar">
+                    <strong>{person.docPrs}<small>/{person.codePrs}</small></strong>
+                    <span className="metric-track mix">
+                      <i className="fill-doc" style={{ width: `${person.docPrs + person.codePrs ? (person.docPrs / (person.docPrs + person.codePrs)) * 100 : 0}%` }} />
+                      <i className="fill-code" style={{ width: `${person.docPrs + person.codePrs ? (person.codePrs / (person.docPrs + person.codePrs)) * 100 : 0}%` }} />
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  {person.tasksOwned === 0 ? <small className="none-mark">—</small> : (
+                    <div className="metric-bar">
+                      <strong>{person.tasksDone}<small>/{person.tasksOwned}</small></strong>
+                      <span className="metric-track"><i className="fill-task" style={{ width: `${(person.tasksDone / person.tasksOwned) * 100}%` }} /></span>
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <div className="metric-bar">
+                    <strong>{person.commitCount}</strong>
+                    <span className="metric-track"><i className="fill-commit" style={{ width: `${(person.commitCount / maxCommits) * 100}%` }} /></span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 /* ---------- 个人成长轨迹 ---------- */
 
 function People({ people, details }: { people: PersonMetrics[]; details: PullDetail[] }) {
@@ -480,7 +543,9 @@ function People({ people, details }: { people: PersonMetrics[]; details: PullDet
   const doneRate = selected.tasksOwned ? Math.round((selected.tasksDone / selected.tasksOwned) * 100) : 0;
 
   return (
-    <div className="progress-people">
+    <>
+      <TeamOverview people={people} selectedId={selected.userId} onSelect={setSelectedId} />
+      <div className="progress-people">
       <aside className="panel progress-members">
         <div className="panel-header"><div><h2>成员</h2><p>{people.length} 人</p></div></div>
         <div className="progress-member-list">
@@ -561,7 +626,8 @@ function People({ people, details }: { people: PersonMetrics[]; details: PullDet
       </section>
 
       {recordsOpen && <PullRecordModal details={details} onClose={() => setRecordsOpen(false)} />}
-    </div>
+      </div>
+    </>
   );
 }
 
