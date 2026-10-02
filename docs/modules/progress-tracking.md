@@ -1,38 +1,60 @@
 # 模块：开发进度（进度页）
 
-> 状态：🚧 开发中
+> 状态：✅ 已上线（2026-09-29，含任务全景、个人成长轨迹、初始化向导）
 > 最近更新：2026-09-29
 
 ## 摘要
-把「分工 × PR 状态」变成任务完成度：项目按顶层模块横排、子任务纵排成热力格，merged 代码 PR = 完成（深绿）、open = 进行中（淡绿）、RFC 已合 = 设计定稿（独立中间档）。另提供个人成长轨迹（产出/节奏/协作指标）与三步初始化向导（接仓库 → 导分工 → 对身份）。
+把「分工 × PR 状态」变成任务完成度：顶层模块横排、子任务纵排成热力格，五态着色（未开始 / 设计中 / 设计定稿 / 开发中 / 已完成，**merged 代码 PR 才算完成**）。另提供个人成长轨迹（产出/节奏/协作指标）与三步初始化向导（接仓库 → 导分工 → 对身份）。入口：侧栏「进度」（全员可见）。
 
 ## 动机
-团队的研发流程是「需求文档 → 分工 → RFC 文档 PR → 评审 → 代码 PR → merged 才算完成」。现有页面看不到"每个模块谁负责、做到哪一步了"；3D 仓库全景是实时活动流，回答不了完成度问题。
+团队流程是「需求文档 → 分工 → RFC 文档 PR → 评审 → 代码 PR → merged」。3D 仓库全景回答"正在发生什么"，回答不了"每个模块谁负责、做到哪一步"——本模块补这一环。
 
-## 已拍板的设计决策
-1. **五态状态机**（用户确认「设计定稿」为独立中间档）：`not_started → designing(RFC open) → designed(RFC merged) → developing(code open) → done(code merged)`。merged 才算完成。
-2. **个人轨迹全员互相可见**（用户确认）；界面命名「成长轨迹」刻意避开 KPI 语感。
-3. **merged PR 文件回填**：243 条 merged 里 220 条缺文件（当时 sync 只拉在飞 PR）。做成**分块可续跑任务**（每次 ≤N 条，返回 remaining），CLI 与向导共用，部署后先在服务器跑完存量。
-4. **双人模块拆分**：模块归属以分工表为准，子任务负责人以 PR 署名自动识别并在界面标注；判不出标「待认领」。
-5. **任务分型**（用户问、我建议采纳）：默认代码型（code merged 才完成）；纯文档型任务 doc merged 即完成，来源为分工表类型列/手动标记（v1 通过 PR kind 判定，任务级类型标记为待办）。
+## 设计决策（均经用户拍板或确认）
+1. **五态状态机**：`not_started → designing(RFC open) → designed(RFC merged) → developing(code open) → done(code merged)`。「设计定稿」是用户确认的独立中间档——RFC 先行流程里它恰好回答"RFC 都交了，代码到哪了"。
+2. **PR ↔ 任务三级证据**（确定性计算，不调大模型）：ref（标题/正文 `BOSC-XXXX` 编号）> rfc（文件命中 `docs/rfcs/<slug>` → `rfc_contracts.workRefs`）> path（文件命中工作项路径模式）。每条关联保留证据类型。
+3. **个人指标全员互相可见**；命名「成长轨迹」刻意避开 KPI 语感。
+4. **merged 文件回填分块可续跑**（每次 ≤N 条、返回 remaining）：243 条 merged 里 220 条缺文件，部署后 CLI 跑了两轮补齐。
+5. **双人模块拆分**：模块归属以分工表为准；子任务负责人识别以 PR 署名为准（本团队因共用账号暂由任务负责人承接，见下）。
+6. **任务分型**：默认代码型；纯文档任务 doc merged 即完成——v1 通过 PR kind 判定，任务级手动标记待办。
 
-## 关键事实（生产侦察）
-- 工作项模块 `work-bosc-XXXX` 的 description 带「能力域：<领域>｜」，可直接做全景分组，无需迁移；
-- 顶层模块 8 个（`module-*`）各只有单一 owner（第二负责人未落库，v1 局限）；
-- `users.gitee_login` 全空 → PR 账号到人的映射靠 `commits`（login→姓名对）+ `users.email` + `identity_aliases`；
-- PR 底账：243 merged（23 有文件）/ 6 open / 68 closed；169 条 docs/RFC 类 PR；1082 条互引边。
-
-## 范围
-- 范围内：关联与状态计算（纯函数）、分块回填、全景视图、个人轨迹 v1、CSV/粘贴文本导入向导、身份别名；
-- 明确不做（v1）：周快照与趋势折线（需要时间积累，表已留）、评审评论的 LLM 错误分类（需先全量回填评论正文）、任务级「文档型」手动标记。
+## 关键实现事实（换个会话必须知道的）
+- **PR 归属到人走任务负责人，不走 PR 署名**：生产上 gux12 一个共用账号推了 254 个 PR、commits 里 `author_login` 全空——按署名归属会把全组工作算给一个人。归属语义：PR 归它关联任务的负责人；一条 PR 关联**多个人的任务**时（共享 RFC/代码面的常态，实测 22 条）不算任何人的独占数，单列「跨人协作 PR」。
+- **身份别名**：`identity_aliases` 表（project_id, alias, user_id, source）。alias 含 `@` 时参与提交邮箱解析，否则参与姓名/账号解析。当前项目已种入 24 条高置信映射（来源 `.githooks/contributors.tsv`——目标仓库的身份权威文件，邮箱/拼音名 → 中文用户）：yuanyt→袁毅堂、liuchy→刘成彦、liu-chengyy→刘成彦、guxiang→顾乡、shipl2→师沛琳、lifch2→厉福超、kangxu→康旭 等。**未映射（待用户在向导第三步确认）**：Zhu Suli（TSV 有但库内无同名用户）、宗杰伦（TSV 无其行）、gux12（共用账号故意不映射）、mortisspl（API token 账号）、jacoffee（名册注明身份不明）。
+- **全景分组**：`modules.group_name`（导入时写）优先，回退 description 里的「能力域：<领域>｜」。顶层模块 = group_name IS NULL 的模块。
+- `buildBoard()`/`buildPeople()` 每次全量现算（300+ PR × 140 任务，路径匹配用编译缓存 + 模式倒排），无状态表，PR 数据更新后自动反映。
 
 ## 关键文件
-- `src/server/progress.ts`（全部服务端逻辑：关联、状态机、回填、人员指标、导入）
-- `src/server/routes.ts` 的 `/api/progress/*`
-- `src/client/pages/ProgressPage.tsx`（全景/轨迹/向导三个界面）
-- `tests/progress.test.ts`
+- `src/server/progress.ts`：关联、状态机、回填、人员指标、CSV/LLM 导入解析、别名
+- `src/server/routes.ts` 的 `/api/progress/*`（board/people/status/backfill-files/import/identity）
+- `src/client/pages/ProgressPage.tsx`：全景 + 轨迹 + 向导
+- `tests/progress.test.ts`：分类、编号/slug 提取、三级证据、五态、分组、CSV、带库集成、身份解析
+- CLI：`backfill-merged-files [--max=N]`
+
+## Bug 与问题记录
+
+### BUG-001 汇总数丢失（2026-09-29，已解决）
+- 错误行为：WHEN 看板渲染 THEN `summary.total` 恒为 0。根因：修类型时删掉了 `total` 累加。解决：分组循环里累加。验证：集成测试断言 total。
+
+### BUG-002 SQL 参数错位（2026-09-29，已解决）
+- 错误行为：WHEN 构建人员指标 THEN `column index out of range`。根因：commits 统计查询没有 `?` 却传了 projectId。解决：补上 `WHERE project_id = ?`。
+
+### BUG-003 共享 PR 归属失真（2026-09-29，已解决，两轮）
+- 错误行为：WHEN 一条 PR 关联多个人的任务 THEN「先到先得」把账全算给第一个迭代到的负责人（厉福超 16/17 任务完成却只显示 2 个 PR，全进刘成彦）；第一版修复又让所有人显示同一个协作数（漏了"本人须在关联负责人里"）。
+- 期望行为：WHEN PR 关联的任务负责人唯一 THEN 计入该成员独立数；WHEN 跨多人 THEN 不重复计入任何人的独占数，单列「跨人协作 PR」。
+- 不可破坏的行为：tasksDone/tasksOwned（按模块 owner 计算）SHALL CONTINUE TO 保持精确，不受共享归属影响。
+- 验证方式：生产真实数据上独占/协作数分化合理（刘成彦 12 独立 + 13 协作；厉福超 2 独立 + 10 协作）。
+
+## 已知限制与待办
+- [ ] 评审评论的 LLM 错误分类（个人轨迹的"常见评审问题"）：需先 `sync-pulls --with-comments` 全量回填评论正文（目前只挖了 !NN 引用），再走 DeepSeek 批量分类；
+- [ ] 周快照与趋势折线（`progress_snapshots`）：需要时间积累后才有意义；
+- [ ] 顶层模块只有一列 owner（库结构限制），第二负责人未展示（如 实验：饶铮+颜茳渭）；
+- [ ] 任务级「文档型」手动标记（当前按 PR kind 推断）；
+- [ ] 已初始化项目的身份对齐入口：向导只在未初始化时出现，已初始化项目可用 `GET/POST /api/progress/identity-suggestions|identity`（admin）补别名，UI 入口待加；
+- [ ] CSV 含逗号的引号内字段按简化规则处理（中文逗号不受影响）。
 
 ## 变更历史
 | 日期 | 变更 | 关联需求 |
 |---|---|---|
-| 2026-09-29 | 立项：决策确认与数据侦察 | 进度可视化需求 |
+| 2026-09-29 | 立项：五态模型、三级证据、初始化向导决策确认 | 进度可视化需求 |
+| 2026-09-29 | 数据层 + API + 前端上线（任务全景/个人轨迹/向导），merged 文件回填 220 条 | 进度页 |
+| 2026-09-29 | 修复汇总丢失/SQL 错位/共享 PR 归属两处失真；生产种入 24 条身份别名 | BUG-001~003 |

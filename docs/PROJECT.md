@@ -32,6 +32,7 @@
 | Web 控制台 | [modules/web-console.md](modules/web-console.md) | ✅ | 完整管理界面、关系图、规则、用户和审计 |
 | CLI 与打包 | [modules/cli-and-packaging.md](modules/cli-and-packaging.md) | ✅ | 本地命令、修复工作流和 Docker 基线 |
 | 仓库全景与实时提交同步 | [modules/repo-panorama.md](modules/repo-panorama.md) | ✅ | 提交级实时分析、冲突飞书提醒与 3D 仓库全景图 |
+| 开发进度 | [modules/progress-tracking.md](modules/progress-tracking.md) | ✅ | 任务全景五态热力（merged 才算完成）、个人成长轨迹、初始化向导 |
 
 ## 变更日志
 | 日期 | 类型 | 摘要 | 涉及模块 |
@@ -83,6 +84,8 @@
 | 2026-09-29 | 修复 | 全面 code review 后修复：Push 通知依据分档失效（恒显示 0 项确定）、「补齐提交」按钮未接 `/api/gitee/sync`、模块页非 admin 卡加载态、3D 自动刷新打散布局、未读计数时区、最后管理员可被降级、SESSION_SECRET 默认密钥警告与解密降级、联调 Run 单事件限额、cleanup 只删 passed 记录、验签常量时间、`/api/gitee/sync` PR 事件复用文件缓存、reanalyze 改异步受理；测试 54→55 | Gitee/飞书接入、Web 控制台、仓库全景、后端平台、影响联调与修复 |
 | 2026-09-29 | 功能 | 新增 `backfill-pull-head [--apply]` 与 `POST /api/admin/backfill-pull-head`：按事件当时的 head sha 重算历史 PR 事件里存错的提交者身份（旧版取 `/pulls/{n}/commits` 最老提交），默认预览、head sha 缺失/被覆盖时退回事件时刻界，不按位置猜；测试 55→58 | Gitee/飞书接入、CLI 与打包、后端平台 |
 | 2026-09-29 | 优化 | 飞书卡片按反馈改版：首行标注事件类型（提交Commit/提交PR/评论/议题）、头部与影响清单用 `-------` 分割、移除控制台链接；新增可选大模型「概要」（OpenAI 兼容 `LLM_API_BASE/KEY/MODEL`，未配置/超时/失败一律回退为无概要卡片，等待发生在已回 202 的后台链路）；测试 58→60 | Gitee/飞书接入、后端平台 |
+| 2026-09-29 | 功能 | 新增「进度」页：任务全景五态热力（merged 代码 PR 才算完成，RFC merged 为设计定稿中间档）、个人成长轨迹（独立/协作 PR、提交节奏热力、合并时长）、三步初始化向导（同步仓库→CSV/AI 导入分工→身份对齐）；`backfill-merged-files` 补齐 220 条 merged PR 文件；身份别名表对接 contributors.tsv（24 条）；PR 归属走任务负责人（共用账号 push 254 个 PR，署名不可用）；测试 60→68 | 开发进度、CLI 与打包、后端平台 |
+| 2026-09-29 | 修复 | backfill-pull-head 在生产应用：122 条历史 PR 事件提交者身份按事件当时 head sha 重算；「补齐提交」按钮接通真实接口；Push 通知依据分档补齐 | 通知身份、历史数据 |
 
 ## 关键问题与解决
 - 现有工具分散：Gitee 可把原始事件推到飞书，AI 审查工具可修 PR，影响分析工具可算风险，但未发现完整覆盖本需求闭环的单体产品。
