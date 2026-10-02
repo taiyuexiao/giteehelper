@@ -681,3 +681,66 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 
 .repo-canvas-wrap:fullscreen { height: 100vh; border: 0; border-radius: 0; }
 .repo-canvas-wrap:fullscreen .repo-controls { top: 16px; left: 16px; right: 16px; }
+
+/* ---------- 进度页 ---------- */
+.progress-tabs { margin-bottom: 14px; }
+.progress-summary .metric { position: relative; }
+.progress-dot { position: absolute; right: 14px; bottom: 14px; width: 12px; height: 12px; border-radius: 4px; }
+.progress-dot-done { background: #2e9e5b; }
+.progress-dot-developing { background: #a5d8b2; }
+.progress-dot-designed { background: repeating-linear-gradient(45deg, #cdeccd 0 4px, #e6f4e6 4px 8px); }
+.progress-dot-designing { background: #bcd7ec; }
+.progress-dot-not_started { background: #dfe5e7; }
+
+.progress-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
+.progress-group { min-width: 236px; flex: 1 0 236px; }
+.progress-group-header { padding: 14px 16px 8px; }
+.progress-group-header h3 { margin: 0 0 4px; font-size: 15px; }
+.progress-group-header span { color: var(--muted, #6b7f88); font-size: 12px; }
+.progress-tasks { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px 14px; }
+
+.progress-task { text-align: left; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; transition: transform 0.12s ease; }
+.progress-task:hover { transform: translateY(-1px); border-color: rgba(47, 127, 168, 0.4); }
+.progress-task strong { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.progress-task small { font-size: 11px; color: #5d7280; }
+
+.progress-done { background: #cdeecd; }
+.progress-developing { background: #e3f4e6; }
+.progress-designed { background: repeating-linear-gradient(45deg, #e2f1e2 0 6px, #eef7ee 6px 12px); }
+.progress-designing { background: #e2eef8; }
+.progress-not_started { background: #f2f5f6; }
+
+.progress-wizard .wizard-step { display: flex; flex-direction: column; gap: 10px; padding: 8px 4px 14px; }
+.progress-wizard .wizard-step h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+.progress-wizard textarea { width: 100%; }
+
+.progress-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; background: #fff; box-shadow: -12px 0 32px rgba(23, 42, 58, 0.18); z-index: 70; display: flex; flex-direction: column; }
+.progress-drawer header { display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 18px 10px; border-bottom: 1px solid #e3eaec; }
+.progress-drawer header h2 { margin: 0 0 4px; font-size: 16px; }
+.progress-drawer header p { margin: 0; color: #5d7280; font-size: 12px; }
+.progress-drawer-body { padding: 12px 18px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.progress-drawer-body h3 { margin: 12px 0 2px; font-size: 13px; color: #40606e; }
+.progress-pr { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: #f5f8f9; text-decoration: none; color: inherit; }
+.progress-pr:hover { background: #ecf2f4; }
+.progress-pr span { font-size: 13px; font-weight: 600; }
+.progress-pr small { font-size: 11px; color: #5d7280; display: flex; align-items: center; gap: 4px; }
+
+.progress-people { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+.progress-people-list { max-height: 70vh; overflow-y: auto; }
+.progress-person h3 { margin: 14px 0 8px; font-size: 13px; color: #40606e; }
+
+.heatmap-wrap { display: inline-flex; flex-direction: column; gap: 3px; }
+.heatmap-row { display: flex; align-items: center; gap: 3px; }
+.heatmap-day { width: 20px; font-size: 10px; color: #7b8e98; }
+.heatmap-cell { width: 13px; height: 13px; border-radius: 3px; background: #eef2f3; }
+.heatmap-cell.level-1 { background: #cdeccd; }
+.heatmap-cell.level-2 { background: #a3dcab; }
+.heatmap-cell.level-3 { background: #6cc184; }
+.heatmap-cell.level-4 { background: #2e9e5b; }
+.heatmap-hours { display: flex; gap: 3px; margin-left: 23px; }
+.heatmap-hours span { width: 13px; font-size: 9px; color: #9aa9b1; text-align: left; }
+
+@media (max-width: 900px) {
+  .progress-people { grid-template-columns: 1fr; }
+  .progress-group { min-width: 210px; flex-basis: 210px; }
+}

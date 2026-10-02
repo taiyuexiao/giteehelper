@@ -13,6 +13,10 @@ import { applyPatternFixes, patternFixPreview, patternHealth } from "./repohealt
 import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncRfcContracts } from "./rfccontract.js";
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
+import {
+  applyAssignment, backfillMergedFiles, buildBoard, buildPeople, identitySuggestions,
+  parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
+} from "./progress.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { cleanupMisleadingData } from "./cleanup.js";
@@ -887,6 +891,69 @@ router.get("/gitee/status", requireAuth, async (_req, res) => {
   } catch (error) {
     res.status(400).json({ configured: true, ok: false, error: error instanceof Error ? error.message : "Gitee connection failed" });
   }
+});
+
+// ---- 进度：任务全景 / 个人轨迹 / 初始化向导 ----
+
+router.get("/progress/board", requireAuth, (_req, res) => {
+  res.json(buildBoard());
+});
+
+router.get("/progress/people", requireAuth, (_req, res) => {
+  res.json(buildPeople());
+});
+
+router.get("/progress/status", requireAuth, (_req, res) => {
+  const missing = queryOne<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1 AND state = 'merged' AND files_json = '[]'`
+  )?.c ?? 0;
+  const pulls = queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM pull_requests WHERE project_id = 1`)?.c ?? 0;
+  res.json({ missingMergedFiles: missing, pulls });
+});
+
+router.post("/progress/backfill-files", requireAuth, requireAdmin, async (req, res) => {
+  // 分块执行：每次最多 max 条，调用方循环到 remaining 为 0（避免代理超时）
+  const max = Math.min(Number((req.body as Record<string, unknown> | undefined)?.max) || 40, 200);
+  try {
+    res.json(await backfillMergedFiles({ max }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "backfill failed" });
+  }
+});
+
+router.post("/progress/import/parse", requireAuth, requireAdmin, async (req, res) => {
+  const body = (req.body ?? {}) as { mode?: string; content?: string };
+  try {
+    const preview = body.mode === "text"
+      ? await parseAssignmentWithLlm(String(body.content ?? ""))
+      : parseAssignmentCsv(String(body.content ?? ""));
+    res.json(preview);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "parse failed" });
+  }
+});
+
+router.post("/progress/import/apply", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const result = applyAssignment((req.body ?? {}) as never, actor(req)?.username ?? "system");
+    audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "progress_import", "project", 1, result);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "import failed" });
+  }
+});
+
+router.get("/progress/identity-suggestions", requireAuth, requireAdmin, (_req, res) => {
+  res.json(identitySuggestions());
+});
+
+router.post("/progress/identity", requireAuth, requireAdmin, (req, res) => {
+  const body = (req.body ?? {}) as { alias?: string; userId?: number };
+  if (!body.alias?.trim() || !Number(body.userId)) {
+    res.status(400).json({ error: "alias 和 userId 必填" });
+    return;
+  }
+  res.json(upsertIdentityAlias(body.alias, Number(body.userId)));
 });
 
 // 未匹配的 /api 路径必须返回 JSON 404；否则会落到前端静态兜底并返回 200 + index.html

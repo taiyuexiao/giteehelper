@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import {
-  Activity, Boxes, FolderGit2, Grid2X2, History, LogOut, Network,
+  Activity, Boxes, FolderGit2, Grid2X2, History, ListChecks, LogOut, Network,
   Plug, Settings, ShieldAlert, UserRound, Wrench, GitMerge
 } from "lucide-react";
 import { api, clearToken, getToken } from "./api";
@@ -10,6 +10,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import GraphPage from "./pages/GraphPage";
 import ModulesPage from "./pages/ModulesPage";
+import ProgressPage from "./pages/ProgressPage";
 import RulesPage from "./pages/RulesPage";
 import UsersPage from "./pages/UsersPage";
 import AuditPage from "./pages/AuditPage";
@@ -26,6 +27,7 @@ const RepoGraphPage = lazy(() => import("./pages/RepoGraphPage"));
 const nav: NavItem[] = [
   { to: "/", label: "待处理", icon: Grid2X2 },
   { to: "/repo", label: "仓库全景", icon: FolderGit2 },
+  { to: "/progress", label: "进度", icon: ListChecks },
   { to: "/graph", label: "关系图", icon: Network },
   { to: "/modules", label: "模块与契约", icon: Boxes },
   { to: "/runs", label: "联调运行", icon: Activity },
@@ -101,6 +103,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/repo" element={<Suspense fallback={<Loading />}><RepoGraphPage user={user} /></Suspense>} />
+          <Route path="/progress" element={<ProgressPage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/modules" element={<ModulesPage user={user} />} />
           <Route path="/rules" element={<Guard user={user} roles={["admin", "maintainer"]}><RulesPage /></Guard>} />

@@ -8,6 +8,7 @@ import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
 import { backfillEventFiles, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
+import { backfillMergedFiles } from "../server/progress.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
 import { loadRuntimeSettings } from "../server/settings.js";
@@ -231,6 +232,14 @@ async function main() {
       }));
       return 0;
     }
+    case "backfill-merged-files": {
+      // 给 merged 且缺文件的 PR 回填文件列表（进度页按路径关联任务要用）。
+      // 分块可续跑：每次最多 --max 条（默认 200），重复执行直到 fetched 为 0。
+      printJson(await backfillMergedFiles({
+        max: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || 200
+      }));
+      return 0;
+    }
     case "reanalyze":
       printJson(reanalyzeAll());
       return 0;
@@ -271,6 +280,7 @@ Commands:
   giteehelper pulls
   giteehelper backfill-files
   giteehelper backfill-pull-head [--apply]
+  giteehelper backfill-merged-files [--max=N]
   giteehelper rfc-sync
   giteehelper rfc-coverage
   giteehelper rfc-apply [--apply]

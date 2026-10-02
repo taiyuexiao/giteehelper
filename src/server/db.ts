@@ -252,6 +252,22 @@ ensureColumn("impacts", "reason_code", "TEXT");
 // 评论类 WebHook 只给 noteable_id（Gitee 数据库 id），要靠它反查 PR 编号
 ensureColumn("pull_requests", "remote_id", "INTEGER");
 
+// 进度页：group_name 标记任务所属顶层模块（NULL = 顶层模块本身）；身份别名表对齐
+// Gitee 账号 / git 署名 / 匿名用户名（如 用户205243）到真实成员
+ensureColumn("modules", "group_name", "TEXT");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS identity_aliases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  alias TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, alias)
+);
+`);
+
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
 db.exec(`
 CREATE TABLE IF NOT EXISTS rfc_contracts (
