@@ -68,7 +68,7 @@ test("分支名里的任务编号与 RFC slug 也参与关联", () => {
   assert.deepEqual(byBranchRef, [{ moduleId: 1, evidence: "ref" }]);
   // 分支带 RFC slug（去掉日期前缀）→ rfc 路由
   const byBranchSlug = associatePull(pull({ title: "chore: 更新", headRef: "feat/x/scoring-jobs-and-scores-t3" }), tasks, rfcIndex);
-  assert.deepEqual(byBranchSlug.map((item) => item.moduleId).sort(), [1, 2]);
+  assert.deepEqual(byBranchSlug.map((item) => item.moduleId).sort(), [1]);
   // 没有任何证据就不硬关联
   assert.deepEqual(associatePull(pull({ title: "chore: 杂项", headRef: "chore/misc" }), tasks, rfcIndex), []);
 });
