@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  associatePull, buildBoard, buildUserIndex, classifyPullKind, extractWorkRefs,
+  associatePull, authorsFromCommits, buildBoard, buildUserIndex, classifyPullKind, extractWorkRefs,
   groupOf, parseAssignmentCsv, rfcSlugsOfFiles, taskStateOf, upsertIdentityAlias,
   type PullCore, type TaskModule
 } from "../src/server/progress.js";
@@ -164,4 +164,22 @@ test("身份解析：login → 提交署名 → 用户，别名表参与解析",
   } finally {
     execute(`DELETE FROM identity_aliases WHERE project_id = ? AND alias = 'tester-login'`, [projectId]);
   }
+});
+
+/**
+ * 团队约定：登录账号共用（大家用刘成彦的号操作），PR 的真实作者只能看
+ * PR 内提交的署名邮箱。Merge 同步提交是评审人的合并动作，不算作者；
+ * 整条 PR 全是 Merge 时退回 head 提交的作者。
+ */
+test("PR 作者解析：剔除 Merge 同步提交，全 Merge 时退回 head 提交作者", () => {
+  const authors = authorsFromCommits([
+    { sha: "a1", email: "guxiang@dev.bosc", name: "Gu Xiang", message: "Merge branch 'main' into feature/x", date: null },
+    { sha: "a2", email: "shipl2@bosc.cn", name: "Shi Peilin", message: "docs: 真实工作", date: null }
+  ], null);
+  assert.deepEqual(authors, [{ name: "Shi Peilin", email: "shipl2@bosc.cn" }]);
+
+  const headOnly = authorsFromCommits([
+    { sha: "b1", email: "guxiang@dev.bosc", name: "Gu Xiang", message: "Merge branch 'main'", date: "2026-09-29T10:00:00+08:00" }
+  ], "b1abcdef");
+  assert.deepEqual(headOnly, [{ name: "Gu Xiang", email: "guxiang@dev.bosc" }]);
 });

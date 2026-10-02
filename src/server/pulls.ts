@@ -91,21 +91,22 @@ export async function fetchPullComments(number: number): Promise<string[]> {
   return rows.map((row) => String(row.body ?? ""));
 }
 
-function upsertPull(project: number, pull: PullRecord) {
+function upsertPull(project: number, pull: PullRecord, authors?: Array<{ name: string | null; email: string | null }>) {
   execute(
     `INSERT INTO pull_requests (project_id, number, remote_id, title, body, state, base_ref, head_ref, head_sha, author_login,
-       merged_at, created_at, updated_at, files_json, additions, deletions, synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       merged_at, created_at, updated_at, files_json, additions, deletions, authors_json, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(project_id, number) DO UPDATE SET
        remote_id = excluded.remote_id,
        title = excluded.title, body = excluded.body, state = excluded.state,
        base_ref = excluded.base_ref, head_ref = excluded.head_ref, head_sha = excluded.head_sha,
        author_login = excluded.author_login, merged_at = excluded.merged_at,
        updated_at = excluded.updated_at, files_json = excluded.files_json,
-       additions = excluded.additions, deletions = excluded.deletions, synced_at = datetime('now')`,
+       additions = excluded.additions, deletions = excluded.deletions,
+       authors_json = COALESCE(excluded.authors_json, pull_requests.authors_json), synced_at = datetime('now')`,
     [project, pull.number, pull.remoteId, pull.title, pull.body, pull.state, pull.baseRef, pull.headRef, pull.headSha,
       pull.authorLogin, pull.mergedAt, pull.createdAt, pull.updatedAt, JSON.stringify(pull.files),
-      pull.additions, pull.deletions]
+      pull.additions, pull.deletions, authors ? JSON.stringify(authors) : null]
   );
 }
 
@@ -176,6 +177,26 @@ export async function syncPullRequests(options: { withComments?: boolean; withFi
     filesFetched,
     references
   };
+}
+
+/**
+ * WebHook 收到 PR 事件时直接落库，让进度页的数据跟上实时回调，
+ * 而不是等下一次手动 sync-pulls。state 优先取事件动作（merge 动作的
+ * payload 里 state 可能还是 open，但它已经合并了）。
+ */
+export function upsertPullFromWebhook(
+  projectId: number,
+  raw: Record<string, unknown>,
+  options: { files?: string[]; authors?: Array<{ name: string | null; email: string | null }>; action?: string } = {}
+) {
+  const pull = mapPull(raw);
+  if (options.files) pull.files = options.files;
+  if (/^(merge|merged)$/i.test(options.action ?? "")) {
+    pull.state = "merged";
+    pull.mergedAt = pull.mergedAt ?? new Date().toISOString();
+  }
+  upsertPull(projectId, pull, options.authors);
+  return pull;
 }
 
 export function listPulls(options: { state?: string; limit?: number } = {}) {

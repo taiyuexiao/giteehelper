@@ -7,7 +7,8 @@ import {
   CONFLICT_SEVERITIES, describeImpacts, ingestCommit, recordWebhookDelivery, updateWebhookDelivery
 } from "./commits.js";
 import { buildCommitImpactCard, sendFeishuText, type CommitLine, type ImpactLine } from "./feishu.js";
-import { mineReferences, pullsTouchedBy } from "./pulls.js";
+import { mineReferences, pullsTouchedBy, upsertPullFromWebhook } from "./pulls.js";
+import { authorsFromCommits } from "./progress.js";
 import { summarizeActivity } from "./summarize.js";
 import { queryAll as queryAllRows } from "./db.js";
 
@@ -267,6 +268,18 @@ async function enrichPullRequest(event: EventInput, payload: Record<string, unkn
     ? String((pull.head as Record<string, unknown>).sha)
     : null;
   const latest = pickHeadCommit(commits, headSha);
+
+  // PR 事件顺带落库 pull_requests 并写真实提交作者，进度页数据跟上实时回调，
+  // 不再依赖手动 sync-pulls；任何一步失败都不阻断事件主流程
+  try {
+    upsertPullFromWebhook(1, pull, {
+      files,
+      authors: authorsFromCommits(commits, headSha),
+      action: event.action
+    });
+  } catch (error) {
+    console.error("[gitee webhook] PR 落库失败：", error instanceof Error ? error.message : error);
+  }
   const headRef = (pull.head as Record<string, unknown> | undefined)?.ref;
   const sender = (payload.sender ?? {}) as Record<string, unknown>;
   const pullAuthor = (payload.author ?? {}) as Record<string, unknown>;

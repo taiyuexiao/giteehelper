@@ -14,9 +14,10 @@ import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncR
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import {
-  applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, identitySuggestions,
+  applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, buildPullDetails, identitySuggestions,
   parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
+import { buildProgressWorkbook } from "./export.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { cleanupMisleadingData } from "./cleanup.js";
@@ -901,6 +902,22 @@ router.get("/progress/board", requireAuth, (_req, res) => {
 
 router.get("/progress/people", requireAuth, (_req, res) => {
   res.json(buildPeople());
+});
+
+router.get("/progress/pulls", requireAuth, (_req, res) => {
+  res.json(buildPullDetails());
+});
+
+router.get("/progress/export.xlsx", requireAuth, async (_req, res) => {
+  try {
+    const buffer = await buildProgressWorkbook();
+    const name = `进度数据-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="progress-export.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "export failed" });
+  }
 });
 
 router.get("/progress/status", requireAuth, (_req, res) => {

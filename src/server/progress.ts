@@ -17,7 +17,7 @@ import { config } from "./config.js";
 import { execute, parseJson, queryAll, queryOne } from "./db.js";
 import { isOperationalModule, wildcardMatch } from "./impact.js";
 import { fetchPullFiles } from "./pulls.js";
-import { fetchPullRequestCommits, pickHeadCommit } from "./gitee.js";
+import { fetchPullRequestCommits, pickHeadCommit, type PullCommit } from "./gitee.js";
 
 export type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
 
@@ -427,13 +427,33 @@ export async function backfillMergedFiles(
   return { fetched, remaining, skipped };
 }
 
+/** 从 PR 的提交列表里解析真实作者：剔除 Merge 同步提交，全 Merge 时退回 head 提交作者 */
+export function authorsFromCommits(
+  commits: PullCommit[],
+  headSha?: string | null
+): Array<{ name: string | null; email: string | null }> {
+  const authors: Array<{ name: string | null; email: string | null }> = [];
+  const seen = new Set<string>();
+  for (const commit of commits) {
+    if (/^merge\b/i.test(commit.message)) continue;
+    const key = `${commit.name ?? ""}|${commit.email ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    authors.push({ name: commit.name, email: commit.email });
+  }
+  if (!authors.length && commits.length) {
+    const head = pickHeadCommit(commits, headSha);
+    if (head) authors.push({ name: head.name, email: head.email });
+  }
+  return authors;
+}
+
 /**
  * 给 PR 回填真实提交作者（[{name,email}]）。
  *
  * 为什么需要：这个团队除顾乡、康旭外都用刘成彦的账号登录 Gitee 操作，
  * author_login 完全不代表作者；但 PR 内提交的作者邮箱是每个人自己的，
- * 与 .githooks/contributors.tsv 名册一致。合并同步类的 Merge 提交不算作者，
- * 全是 Merge 时退回 head 提交的作者。NULL=未回填，[]=回填过但无可用署名。
+ * 与 .githooks/contributors.tsv 名册一致。NULL=未回填，[]=回填过但无可用署名。
  */
 export async function backfillPullAuthors(
   options: { max?: number } = {},
@@ -449,20 +469,7 @@ export async function backfillPullAuthors(
   for (const row of pending) {
     const commits = await fetchPullRequestCommits(config.giteeRepo, row.number, { perPage: 100, maxPages: 3 })
       .catch(() => [] as Awaited<ReturnType<typeof fetchPullRequestCommits>>);
-    const authors: Array<{ name: string | null; email: string | null }> = [];
-    const seen = new Set<string>();
-    for (const commit of commits) {
-      if (/^merge\b/i.test(commit.message)) continue;
-      const key = `${commit.name ?? ""}|${commit.email ?? ""}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      authors.push({ name: commit.name, email: commit.email });
-    }
-    if (!authors.length && commits.length) {
-      // 全是合并同步提交：退回这次真正推进的 head 提交的作者
-      const head = pickHeadCommit(commits, row.headSha);
-      if (head) authors.push({ name: head.name, email: head.email });
-    }
+    const authors = authorsFromCommits(commits, row.headSha);
     execute(`UPDATE pull_requests SET authors_json = ? WHERE project_id = ? AND number = ?`,
       [JSON.stringify(authors), projectId, row.number]);
   }
@@ -478,6 +485,7 @@ export interface UserIndex {
   byLogin: Map<string, number>;
   byEmail: Map<string, number>;
   namesByLogin: Map<string, string[]>;
+  nameOf(userId: number): string | null;
   resolveCommit(login: string | null, name: string | null, email: string | null): number | null;
 }
 
@@ -520,6 +528,9 @@ export function buildUserIndex(projectId = 1): UserIndex {
     byLogin,
     byEmail,
     namesByLogin,
+    nameOf(userId) {
+      return nameById.get(userId) ?? null;
+    },
     resolveCommit(login, name, email) {
       if (login && byLogin.has(login)) return byLogin.get(login)!;
       if (email && byEmail.has(email.toLowerCase())) return byEmail.get(email.toLowerCase())!;
@@ -652,6 +663,82 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
   }
   // 有 PR/提交但身份没对上的人也会在向导第三步处理；这里只返回能对上身份的成员
   return metrics.filter((person) => person.tasksOwned > 0 || person.mergedPrs > 0 || person.openPrs > 0 || person.commitCount > 0);
+}
+
+/* ---------- PR 明细（进度页表格与 xlsx 导出的同一数据源） ---------- */
+
+export interface PullDetail {
+  number: number;
+  title: string;
+  state: string;
+  kind: PullKind;
+  authorLogin: string | null;
+  /** 解析后的作者标签（能对上身份就显示成员名，否则原文署名） */
+  authorNames: string[];
+  authorEmails: string[];
+  createdAt: string | null;
+  mergedAt: string | null;
+  hoursToMerge: number | null;
+  headRef: string | null;
+  additions: number;
+  deletions: number;
+  fileCount: number;
+  tasks: string[];
+}
+
+export function buildPullDetails(projectId = 1): PullDetail[] {
+  const index = buildUserIndex(projectId);
+  const board = buildBoard(projectId);
+  const taskNames = new Map<number, string[]>();
+  for (const group of board.groups) {
+    for (const task of group.tasks) {
+      for (const pull of task.pulls) {
+        const list = taskNames.get(pull.number) ?? [];
+        const label = `${group.name}·${task.name}`;
+        if (!list.includes(label)) list.push(label);
+        taskNames.set(pull.number, list);
+      }
+    }
+  }
+  return queryAll<Record<string, unknown>>(
+    `SELECT number, title, state, author_login AS authorLogin, head_ref AS headRef,
+            created_at AS createdAt, merged_at AS mergedAt, additions, deletions,
+            files_json AS filesJson, authors_json AS authorsJson
+     FROM pull_requests WHERE project_id = ? ORDER BY number DESC`,
+    [projectId]
+  ).map((row) => {
+    const number = Number(row.number);
+    const createdAt = (row.createdAt as string | null) ?? null;
+    const mergedAt = (row.mergedAt as string | null) ?? null;
+    const files = parseJson<string[]>(row.filesJson, []);
+    const authors = parseJson<Array<{ name: string | null; email: string | null }>>(row.authorsJson, []);
+    const authorNames: string[] = [];
+    const authorEmails: string[] = [];
+    for (const author of authors) {
+      const userId = index.resolveCommit(null, author.name, author.email);
+      const label = userId ? index.nameOf(userId) ?? author.name ?? author.email ?? "?" : author.name ?? author.email ?? "?";
+      if (!authorNames.includes(label)) authorNames.push(label);
+      if (author.email && !authorEmails.includes(author.email)) authorEmails.push(author.email);
+    }
+    const hours = toStamp(mergedAt) - toStamp(createdAt);
+    return {
+      number,
+      title: String(row.title ?? ""),
+      state: String(row.state ?? ""),
+      kind: classifyPullKind(files, String(row.title ?? "")),
+      authorLogin: (row.authorLogin as string | null) ?? null,
+      authorNames,
+      authorEmails,
+      createdAt,
+      mergedAt,
+      hoursToMerge: mergedAt && hours >= 0 && Number.isFinite(hours) ? Math.round(hours / 3.6) / 10 : null,
+      headRef: (row.headRef as string | null) ?? null,
+      additions: Number(row.additions ?? 0) || 0,
+      deletions: Number(row.deletions ?? 0) || 0,
+      fileCount: files.length,
+      tasks: taskNames.get(number) ?? []
+    };
+  });
 }
 
 /* ---------- 分工导入（初始化向导第二步） ---------- */

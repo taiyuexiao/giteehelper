@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardList, Download, ExternalLink, ListChecks, RefreshCw, UserRound, Users } from "lucide-react";
-import { api } from "../api";
+import { api, downloadFile } from "../api";
 import { EmptyState, Loading, PageHeader, StatusBadge } from "../components";
 import type { Role } from "../../shared/types";
 
@@ -35,6 +35,13 @@ type PersonMetrics = {
 };
 
 type IdentitySuggestion = { login: string; prs: number; resolvedTo: number | null; resolvedName: string | null; sampleNames: string[] };
+
+type PullDetail = {
+  number: number; title: string; state: string; kind: string; authorLogin: string | null;
+  authorNames: string[]; authorEmails: string[];
+  createdAt: string | null; mergedAt: string | null; hoursToMerge: number | null;
+  headRef: string | null; additions: number; deletions: number; fileCount: number; tasks: string[];
+};
 
 type AssignmentPreview = {
   modules: Array<{
@@ -405,12 +412,13 @@ function Heatmap({ heat }: { heat: number[][] }) {
   );
 }
 
-function People({ people }: { people: PersonMetrics[] }) {
+function People({ people, details }: { people: PersonMetrics[]; details: PullDetail[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = people.find((person) => person.userId === selectedId) ?? people[0];
   if (!selected) return <EmptyState icon={<Users size={25} />} title="还没有成员数据" text="同步仓库并导入分工后，这里会展示每位成员的成长轨迹。" />;
   return (
-    <section className="progress-people">
+    <>
+      <section className="progress-people">
       <aside className="panel progress-people-list">
         <div className="panel-header"><div><h2>成员</h2><p>{people.length} 人</p></div></div>
         {people.map((person) => (
@@ -439,6 +447,93 @@ function People({ people }: { people: PersonMetrics[] }) {
         <Heatmap heat={selected.heat} />
         <p className="detail-note">共 {selected.commitCount} 次提交；引用他人 PR {selected.referencesOut} 次。评审常见错误分类需要先回填评审评论（见模块文档待办）。</p>
       </article>
+      </section>
+      <PullDetailTable details={details} />
+    </>
+  );
+}
+
+/* ---------- PR 明细（与 xlsx 导出同一数据源，WebHook 实时更新） ---------- */
+
+function PullDetailTable({ details }: { details: PullDetail[] }) {
+  const [stateFilter, setStateFilter] = useState("");
+  const [authorFilter, setAuthorFilter] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  const authors = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of details) for (const name of item.authorNames) names.add(name);
+    return [...names].sort((a, b) => a.localeCompare(b, "zh"));
+  }, [details]);
+
+  const filtered = details.filter((item) => {
+    if (stateFilter && item.state !== stateFilter) return false;
+    if (authorFilter && !item.authorNames.includes(authorFilter)) return false;
+    if (keyword && !`${item.number} ${item.title} ${item.authorNames.join(" ")} ${item.headRef ?? ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
+    return true;
+  });
+
+  async function exportXlsx() {
+    setExporting(true);
+    try {
+      await downloadFile("/progress/export.xlsx", `进度数据-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const stateBadge = (state: string) => (
+    <span className={`badge ${state === "merged" ? "status-passed" : state === "open" ? "status-running" : "status-blocked"}`}>{state}</span>
+  );
+
+  return (
+    <section className="panel progress-detail">
+      <div className="panel-header">
+        <div><h2>PR 明细</h2><p>共 {details.length} 个 PR，命中 {filtered.length} 个；作者按提交署名邮箱解析，Merge 同步提交不计。数据随 WebHook 实时更新。</p></div>
+        <button className="secondary-button" onClick={() => void exportXlsx()} disabled={exporting}>
+          <Download size={16} />{exporting ? "生成中…" : "导出 xlsx"}
+        </button>
+      </div>
+      <div className="filter-bar" style={{ padding: "0 0 10px" }}>
+        <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="按状态过滤">
+          <option value="">全部状态</option>
+          <option value="merged">merged</option>
+          <option value="open">open</option>
+          <option value="closed">closed</option>
+        </select>
+        <select value={authorFilter} onChange={(event) => setAuthorFilter(event.target.value)} aria-label="按提交作者过滤">
+          <option value="">全部作者</option>
+          {authors.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+        <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索编号 / 标题 / 分支" />
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyState icon={<ClipboardList size={23} />} title="没有匹配的 PR" text="调整筛选条件后重试。" />
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead><tr>
+              <th>编号</th><th>标题</th><th>状态</th><th>提交作者</th><th>耗时(h)</th><th>+/-</th><th>文件</th><th>关联任务</th>
+            </tr></thead>
+            <tbody>
+              {filtered.slice(0, 400).map((item) => (
+                <tr key={item.number}>
+                  <td>!{item.number}</td>
+                  <td><div className="cell-main" style={{ maxWidth: 380 }}>{item.title}</div><small>{item.createdAt?.slice(0, 10)} · {item.authorLogin ?? "—"}</small></td>
+                  <td>{stateBadge(item.state)}</td>
+                  <td>{item.authorNames.join("、") || <small>未识别</small>}</td>
+                  <td>{item.hoursToMerge ?? "—"}</td>
+                  <td><small>+{item.additions}/-{item.deletions}</small></td>
+                  <td>{item.fileCount}</td>
+                  <td><small>{item.tasks.slice(0, 2).join("、")}{item.tasks.length > 2 ? ` 等${item.tasks.length}项` : ""}</small></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {filtered.length > 400 && <p className="detail-note" style={{ padding: "8px 0 0" }}>仅显示前 400 条，完整数据请导出 xlsx。</p>}
     </section>
   );
 }
@@ -449,18 +544,21 @@ export default function ProgressPage() {
   const [tab, setTab] = useState<"board" | "people">("board");
   const [board, setBoard] = useState<BoardData | null>(null);
   const [people, setPeople] = useState<PersonMetrics[] | null>(null);
+  const [details, setDetails] = useState<PullDetail[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     setBusy(true);
     try {
-      const [boardData, peopleData] = await Promise.all([
+      const [boardData, peopleData, detailData] = await Promise.all([
         api<BoardData>("/progress/board"),
-        api<PersonMetrics[]>("/progress/people")
+        api<PersonMetrics[]>("/progress/people"),
+        api<PullDetail[]>("/progress/pulls")
       ]);
       setBoard(boardData);
       setPeople(peopleData);
+      setDetails(detailData);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -470,7 +568,7 @@ export default function ProgressPage() {
   };
   useEffect(() => { void load(); }, []);
 
-  if (!board || !people) {
+  if (!board || !people || !details) {
     return (
       <>
         <PageHeader title="进度" description="任务完成度与个人成长轨迹。" />
@@ -496,7 +594,7 @@ export default function ProgressPage() {
             <button className={tab === "board" ? "active" : ""} onClick={() => setTab("board")}>任务全景</button>
             <button className={tab === "people" ? "active" : ""} onClick={() => setTab("people")}>个人成长轨迹</button>
           </div>
-          {tab === "board" ? <Board data={board} /> : <People people={people} />}
+          {tab === "board" ? <Board data={board} /> : <People people={people} details={details} />}
         </>
       )}
     </>
