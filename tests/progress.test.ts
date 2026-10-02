@@ -100,6 +100,10 @@ test("带库的全景：按导入数据算出五态与分组", () => {
     `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name) VALUES (?, 'prog-top', '进度测试域', ?, NULL)`,
     [projectId, owner]
   );
+  execute(
+    `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name) VALUES (?, 'prog-report', '进度报告', ?, NULL)`,
+    [projectId, owner]
+  );
   const mkTask = (key: string, name: string, paths: string) =>
     execute(
       `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name, paths_json) VALUES (?, ?, ?, ?, '进度测试域', ?)`,
@@ -107,7 +111,16 @@ test("带库的全景：按导入数据算出五态与分组", () => {
     ).lastInsertRowid;
   const doneTask = Number(mkTask("work-prog-done", "进度 · 已完成", JSON.stringify(["src/prog-done/**"])));
   const devTask = Number(mkTask("work-prog-dev", "进度 · 开发中", JSON.stringify(["src/prog-dev/**"])));
-  const designedTask = Number(mkTask("work-prog-designed", "进度 · 设计定稿", JSON.stringify(["docs/prog/**"])));
+  const designedTask = Number(mkTask("work-prog-designed", "进度报告 · 设计定稿", JSON.stringify(["docs/prog/**"])));
+  // 能力域名与顶层模块名不一致时走别名表（生产上 执行与证据 → 运行 就是这种）
+  execute(
+    `INSERT INTO module_group_aliases (project_id, group_name, module_id) VALUES (?, '进度测试域报告线', (SELECT id FROM modules WHERE module_key = 'prog-report' AND project_id = ?))`,
+    [projectId, projectId]
+  );
+  execute(
+    `UPDATE modules SET group_name = '进度测试域报告线' WHERE id = ?`,
+    [designedTask]
+  );
   try {
     const mkPull = (number: number, state: string, files: string[], title: string) =>
       execute(
@@ -126,12 +139,16 @@ test("带库的全景：按导入数据算出五态与分组", () => {
     const byId = new Map(group.tasks.map((task) => [task.moduleId, task]));
     assert.equal(byId.get(doneTask)?.state, "done");
     assert.equal(byId.get(devTask)?.state, "developing");
-    assert.equal(byId.get(designedTask)?.state, "designed");
-    // 9004 命中了 docs/prog/**（无）——它只碰 src/prog-designed，无模式匹配也无编号 → 不该点亮别的任务
+    // 别名表把「进度测试域报告线」挂到顶层模块「进度报告」，负责人随顶层模块解析
+    const reportGroup = board.groups.find((item) => item.name === "进度测试域报告线");
+    assert.ok(reportGroup, "别名分组应存在");
+    assert.equal(reportGroup.ownerName, "系统管理员");
+    assert.equal(reportGroup.tasks.find((task) => task.moduleId === designedTask)?.state, "designed");
     assert.equal(board.summary.total >= 3, true);
   } finally {
     execute(`DELETE FROM pull_requests WHERE project_id = ? AND number BETWEEN 9001 AND 9004`, [projectId]);
-    execute(`DELETE FROM modules WHERE project_id = ? AND (module_key LIKE 'work-prog-%' OR module_key = 'prog-top')`, [projectId]);
+    execute(`DELETE FROM module_group_aliases WHERE project_id = ? AND group_name = '进度测试域报告线'`, [projectId]);
+    execute(`DELETE FROM modules WHERE project_id = ? AND (module_key LIKE 'work-prog-%' OR module_key IN ('prog-top', 'prog-report'))`, [projectId]);
   }
 });
 

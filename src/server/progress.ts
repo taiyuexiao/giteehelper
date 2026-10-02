@@ -318,6 +318,20 @@ export function buildBoard(projectId = 1): BoardData {
   }
 
   const groups = new Map<string, BoardGroup>();
+  // 能力域 → 顶层模块：精确同名 → 前缀包含（报告 ⊂ 报告与指标体系）→ 显式别名表
+  // （多维表格里两者命名常不一致，如 执行与证据 → 运行，词面上毫无关系，只能显式映射）
+  const groupAliases = new Map(
+    queryAll<{ groupName: string; moduleId: number }>(
+      `SELECT group_name AS groupName, module_id AS moduleId FROM module_group_aliases WHERE project_id = ?`,
+      [projectId]
+    ).map((row) => [row.groupName.toLowerCase(), row.moduleId])
+  );
+  const matchTop = (groupName: string) => {
+    const aliased = groupAliases.get(groupName.toLowerCase());
+    if (aliased) return topRows.find((row) => row.id === aliased);
+    return topRows.find((row) => row.name === groupName)
+      ?? topRows.find((row) => groupName.startsWith(row.name) || row.name.startsWith(groupName));
+  };
   for (const task of tasks) {
     const groupName = task.group ?? "未分组";
     const associated = byModule.get(task.id) ?? [];
@@ -352,7 +366,7 @@ export function buildBoard(projectId = 1): BoardData {
           authorLogin: item.pull.authorLogin
         }))
     };
-    const top = topRows.find((row) => row.name === groupName);
+    const top = matchTop(groupName);
     const group = groups.get(groupName) ?? {
       name: groupName,
       moduleId: top?.id ?? null,

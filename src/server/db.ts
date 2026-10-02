@@ -266,6 +266,15 @@ CREATE TABLE IF NOT EXISTS identity_aliases (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, alias)
 );
+
+-- 进度页：能力域分组名 → 顶层模块（多维表格里两者命名常不一致，如 执行与证据 → 运行）
+CREATE TABLE IF NOT EXISTS module_group_aliases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  group_name TEXT NOT NULL,
+  module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  UNIQUE(project_id, group_name)
+);
 `);
 
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
