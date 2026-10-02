@@ -28,7 +28,7 @@ test("工作项编号与 RFC slug 的提取", () => {
 
 function pull(overrides: Partial<PullCore>): PullCore {
   return {
-    number: 1, title: "", body: "", state: "merged", authorLogin: null, url: null,
+    number: 1, title: "", body: "", state: "merged", authorLogin: null, url: null, headRef: null,
     createdAt: null, updatedAt: null, mergedAt: null, additions: 0, deletions: 0, files: [],
     ...overrides
   };
@@ -59,6 +59,18 @@ test("关联走三级证据：编号 > RFC 路径 > 模式，同一 RFC 的兄�
   // 弱证据被强证据覆盖
   const mixed = associatePull(pull({ title: "fix(BOSC-0102): x", files: ["src/report/X.java"] }), tasks, rfcIndex);
   assert.deepEqual(mixed, [{ moduleId: 3, evidence: "ref" }]);
+});
+
+test("分支名里的任务编号与 RFC slug 也参与关联", () => {
+  const rfcIndex = new Map([["20260914-scoring", ["work-bosc-0100"]]]);
+  // 分支带 BOSC 编号 → ref 路由
+  const byBranchRef = associatePull(pull({ title: "feat: 调整", headRef: "feat/yuanyt/BOSC-0100-scoring-jobs" }), tasks, rfcIndex);
+  assert.deepEqual(byBranchRef, [{ moduleId: 1, evidence: "ref" }]);
+  // 分支带 RFC slug（去掉日期前缀）→ rfc 路由
+  const byBranchSlug = associatePull(pull({ title: "chore: 更新", headRef: "feat/x/scoring-jobs-and-scores-t3" }), tasks, rfcIndex);
+  assert.deepEqual(byBranchSlug.map((item) => item.moduleId).sort(), [1, 2]);
+  // 没有任何证据就不硬关联
+  assert.deepEqual(associatePull(pull({ title: "chore: 杂项", headRef: "chore/misc" }), tasks, rfcIndex), []);
 });
 
 test("五态状态机：merged 才算完成，RFC merged 是设计定稿", () => {

@@ -38,6 +38,7 @@ export interface PullCore {
   state: string;
   authorLogin: string | null;
   url: string | null;
+  headRef: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   mergedAt: string | null;
@@ -153,7 +154,8 @@ export function associatePull(
     }
   };
 
-  for (const key of extractWorkRefs(`${pull.title}\n${pull.body}`)) {
+  // 编号证据也扫分支名：这个仓库的分支约定直接编码任务号（feat/yuanyt/BOSC-0100-...）
+  for (const key of extractWorkRefs(`${pull.title}\n${pull.body}\n${pull.headRef ?? ""}`)) {
     const task = tasks.find((item) => item.key === key);
     if (task) add(task.id, "ref");
   }
@@ -162,6 +164,19 @@ export function associatePull(
       for (const key of rfcIndex.get(slug) ?? []) {
         const task = tasks.find((item) => item.key === key);
         if (task) add(task.id, "rfc");
+      }
+    }
+  }
+  if (hits.size === 0 && pull.headRef) {
+    // 分支名里内嵌 RFC slug（去掉日期前缀的部分）：feat/x/scoring-jobs-and-scores-...
+    const branch = pull.headRef.toLowerCase();
+    for (const [slug, keys] of rfcIndex) {
+      const stem = slug.replace(/^\d{8}-/, "");
+      if (stem.length >= 6 && branch.includes(stem)) {
+        for (const key of keys) {
+          const task = tasks.find((item) => item.key === key);
+          if (task) add(task.id, "rfc");
+        }
       }
     }
   }
@@ -284,7 +299,7 @@ export function buildBoard(projectId = 1): BoardData {
     return owner && name ? `https://gitee.com/${owner}/${name}/pulls/${number}` : null;
   };
   const pulls = queryAll<Record<string, unknown>>(
-    `SELECT number, title, body, state, author_login AS authorLogin, created_at AS createdAt,
+    `SELECT number, title, body, state, author_login AS authorLogin, head_ref AS headRef, created_at AS createdAt,
             updated_at AS updatedAt, merged_at AS mergedAt, additions, deletions, files_json AS filesJson
      FROM pull_requests WHERE project_id = ?`,
     [projectId]
@@ -295,6 +310,7 @@ export function buildBoard(projectId = 1): BoardData {
     state: String(row.state ?? ""),
     authorLogin: (row.authorLogin as string | null) ?? null,
     url: pullUrl(Number(row.number)),
+    headRef: (row.headRef as string | null) ?? null,
     createdAt: (row.createdAt as string | null) ?? null,
     updatedAt: (row.updatedAt as string | null) ?? null,
     mergedAt: (row.mergedAt as string | null) ?? null,
@@ -583,7 +599,7 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
    * 一条 PR 有多个作者时（如联修）每人各计一次；Merge 同步提交不算作者。
    */
   const pulls = queryAll<Record<string, unknown>>(
-    `SELECT number, state, title, created_at AS createdAt, merged_at AS mergedAt,
+    `SELECT number, state, title, head_ref AS headRef, created_at AS createdAt, merged_at AS mergedAt,
             additions, deletions, files_json AS filesJson, authors_json AS authorsJson
      FROM pull_requests WHERE project_id = ?`, [projectId]
   ).map((row): PullCore & { kind: PullKind; authors: Array<{ name: string | null; email: string | null }> } => ({
@@ -593,6 +609,7 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
     state: String(row.state ?? ""),
     authorLogin: null,
     url: null,
+    headRef: (row.headRef as string | null) ?? null,
     createdAt: (row.createdAt as string | null) ?? null,
     updatedAt: (row.updatedAt as string | null) ?? null,
     mergedAt: (row.mergedAt as string | null) ?? null,
