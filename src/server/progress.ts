@@ -561,7 +561,7 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
     const merged = exclusive.filter((pull) => pull.state === "merged");
     const sharedMergedPrs = involved.filter((pull) => {
       const owners = pullOwners.get(pull.number)!;
-      return pull.state === "merged" && owners.size > 1;
+      return pull.state === "merged" && owners.size > 1 && owners.has(row.id);
     }).length;
     const mergeHours = merged
       .map((pull) => (toStamp(pull.mergedAt) - toStamp(pull.createdAt)) / 3_600_000)
