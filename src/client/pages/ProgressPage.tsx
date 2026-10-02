@@ -29,7 +29,7 @@ type BoardData = {
 
 type PersonMetrics = {
   userId: number; name: string; tasksOwned: number; tasksDone: number;
-  mergedPrs: number; openPrs: number; docPrs: number; codePrs: number;
+  mergedPrs: number; sharedMergedPrs: number; openPrs: number; docPrs: number; codePrs: number;
   additions: number; deletions: number; avgMergeHours: number | null;
   commitCount: number; heat: number[][]; referencedBy: number; referencesOut: number; logins: string[];
 };
@@ -419,10 +419,10 @@ function People({ people }: { people: PersonMetrics[] }) {
           </span>
         </div>
         <section className="metric-grid">
-          <article className="metric"><span>已合并 PR</span><strong>{selected.mergedPrs}</strong><RefreshCw size={19} /></article>
+          <article className="metric"><span>独立合并 PR</span><strong>{selected.mergedPrs}</strong><RefreshCw size={19} /></article>
+          <article className="metric"><span>跨人协作 PR</span><strong>{selected.sharedMergedPrs}</strong><Users size={19} /></article>
           <article className="metric"><span>在飞 PR</span><strong>{selected.openPrs}</strong><RefreshCw size={19} /></article>
-          <article className="metric"><span>文档 / 代码 PR</span><strong>{selected.docPrs} / {selected.codePrs}</strong><ClipboardList size={19} /></article>
-          <article className="metric"><span>代码量</span><strong>+{selected.additions}/-{selected.deletions}</strong><ClipboardList size={19} /></article>
+          <article className="metric"><span>代码量（独立）</span><strong>+{selected.additions}/-{selected.deletions}</strong><ClipboardList size={19} /></article>
           <article className="metric"><span>平均合并时长</span><strong>{selected.avgMergeHours === null ? "—" : `${selected.avgMergeHours} 小时`}</strong><RefreshCw size={19} /></article>
           <article className="metric"><span>被 ! 引用</span><strong>{selected.referencedBy}</strong><Users size={19} /></article>
         </section>

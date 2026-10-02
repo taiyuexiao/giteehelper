@@ -477,7 +477,10 @@ export interface PersonMetrics {
   name: string;
   tasksOwned: number;
   tasksDone: number;
+  /** 独占合并 PR：关联任务的负责人只有他一个人 */
   mergedPrs: number;
+  /** 跨人协作 PR：一条 PR 关联了多个人的任务（共享 RFC/代码面的常态），不重复计入任何人的独立数 */
+  sharedMergedPrs: number;
   openPrs: number;
   docPrs: number;
   codePrs: number;
@@ -504,14 +507,16 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
   /**
    * PR 归属到人：这个团队的 Gitee 账号是共用的（gux12 推了 254 个 PR），
    * 按 PR 署名归属会把所有人的工作算到一个人头上。因此归属走
-   * 「PR → 关联任务（三级证据）→ 任务负责人」——分工表就是流程事实。
-   * 同一 PR 关联多个任务时归到证据最强的第一个，不重复计数。
+   * 「PR → 关联任务（三级证据）→ 任务负责人」。一条 PR 关联多个人的任务时
+   * （共享 RFC/代码面的常态）不算任何人的独占数，如实标为跨人协作。
    */
-  const pullOwner = new Map<number, number | null>();
+  const pullOwners = new Map<number, Set<number>>();
   for (const group of board.groups) {
     for (const task of group.tasks) {
       for (const pull of task.pulls) {
-        if (!pullOwner.has(pull.number)) pullOwner.set(pull.number, task.ownerUserId);
+        const owners = pullOwners.get(pull.number) ?? new Set<number>();
+        if (task.ownerUserId) owners.add(task.ownerUserId);
+        pullOwners.set(pull.number, owners);
       }
     }
   }
@@ -545,11 +550,19 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
   const metrics: PersonMetrics[] = [];
   for (const row of queryAll<{ id: number; displayName: string }>(`SELECT id, display_name AS displayName FROM users WHERE active = 1 ORDER BY id`)) {
     const owned = board.groups.flatMap((group) => group.tasks).filter((task) => task.ownerUserId === row.id);
-    const personPulls = pulls.filter((pull) => pullOwner.get(pull.number) === row.id);
-    const logins = [...new Set(personPulls.map((pull) => pull.authorLogin).filter(Boolean) as string[])];
+    const involved = pulls.filter((pull) => (pullOwners.get(pull.number)?.size ?? 0) > 0);
+    const exclusive = involved.filter((pull) => {
+      const owners = pullOwners.get(pull.number)!;
+      return owners.size === 1 && owners.has(row.id);
+    });
+    const logins = [...new Set(involved.map((pull) => pull.authorLogin).filter(Boolean) as string[])];
     const personCommits = commits.filter((commit) => index.resolveCommit(commit.login, commit.name, commit.email) === row.id);
-    const pullNumbers = new Set(personPulls.map((pull) => pull.number));
-    const merged = personPulls.filter((pull) => pull.state === "merged");
+    const pullNumbers = new Set(involved.map((pull) => pull.number));
+    const merged = exclusive.filter((pull) => pull.state === "merged");
+    const sharedMergedPrs = involved.filter((pull) => {
+      const owners = pullOwners.get(pull.number)!;
+      return pull.state === "merged" && owners.size > 1;
+    }).length;
     const mergeHours = merged
       .map((pull) => (toStamp(pull.mergedAt) - toStamp(pull.createdAt)) / 3_600_000)
       .filter((hours) => Number.isFinite(hours) && hours >= 0);
@@ -567,11 +580,12 @@ export function buildPeople(projectId = 1): PersonMetrics[] {
       tasksOwned: owned.length,
       tasksDone: owned.filter((task) => task.state === "done").length,
       mergedPrs: merged.length,
-      openPrs: personPulls.filter((pull) => pull.state === "open").length,
-      docPrs: personPulls.filter((pull) => pull.kind === "doc").length,
-      codePrs: personPulls.filter((pull) => pull.kind !== "doc").length,
-      additions: personPulls.reduce((sum, pull) => sum + pull.additions, 0),
-      deletions: personPulls.reduce((sum, pull) => sum + pull.deletions, 0),
+      sharedMergedPrs,
+      openPrs: involved.filter((pull) => pull.state === "open" && pullOwners.get(pull.number)!.has(row.id)).length,
+      docPrs: exclusive.filter((pull) => pull.kind === "doc").length,
+      codePrs: exclusive.filter((pull) => pull.kind !== "doc").length,
+      additions: exclusive.reduce((sum, pull) => sum + pull.additions, 0),
+      deletions: exclusive.reduce((sum, pull) => sum + pull.deletions, 0),
       avgMergeHours: mergeHours.length
         ? Math.round(mergeHours.reduce((sum, hours) => sum + hours, 0) / mergeHours.length)
         : null,
