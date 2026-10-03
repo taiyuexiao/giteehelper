@@ -129,11 +129,13 @@ export default function TimelineTab() {
 
   // 日期刻度：标签间距 ≥ 64px
   const dayTicks = useMemo(() => {
+    if (!pxPerDay) return []; // pxPerDay 尚未初始化时 xOf 恒为 0，循环条件永远为真——首帧死循环的教训
     const step = Math.max(1, Math.ceil(64 / pxPerDay));
     const ticks: Array<{ x: number; label: string; weekend: boolean; today: boolean }> = [];
     const firstDay = Math.floor(startTs / DAY) * DAY;
     const now = Date.now();
-    for (let day = firstDay; xOf(day) < width + 80; day += DAY) {
+    let guard = 0;
+    for (let day = firstDay; xOf(day) < width + 80 && guard < 500; day += DAY, guard += 1) {
       const x = xOf(day);
       if (x < -80) continue;
       const date = new Date(day + 8 * 3_600_000); // 东八区的“零点”刻度
