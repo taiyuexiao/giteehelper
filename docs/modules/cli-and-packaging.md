@@ -55,7 +55,7 @@ npm scripts 下用 `npm run cli -- <command>` 调用。
 ## 验证
 - `npm run build` 通过；Docker 单服务构建定义完成；
 - 测试与生产数据隔离：`npm test` 前由 `pretest` 执行 `scripts/reset-test-db.mjs`，并把 `DATABASE_PATH` 指向 `data/test/giteehelper-test.db`（此前测试直连真实库，留下过 21 条测试生成的「已批准」修复包）；
-- `npm test` 60 项通过（`tests/` 下 12 个文件），覆盖：WebHook 签名与事件标准化、影响匹配精度（深层路径/中文分词/停用词）、影响原因分类、RFC 契约反查（三件套模式、同名类不生成）、通知分组与身份、提交语义解析与幂等、**提交影响自带分档（确定/线索）**、历史 pullHead 重算（head sha 定位、事件时间界）、卡片概要与事件类型标注、契约版本兼容、联调桩、Repair Bundle 与审批边界、误导数据清理；
+- `npm test` 73 项通过（`tests/` 下 14 个文件），覆盖：WebHook 签名与事件标准化、影响匹配精度（深层路径/中文分词/停用词）、影响原因分类、RFC 契约反查（三件套模式、同名类不生成）、通知分组与身份、提交语义解析与幂等、**提交影响自带分档（确定/线索）**、历史 pullHead 重算（head sha 定位、事件时间界）、卡片概要与事件类型标注、契约版本兼容、联调桩、Repair Bundle 与审批边界、误导数据清理；
 - 测试串行运行（`--test-concurrency=1` + SQLite `busy_timeout`），见后端平台 BUG-001。
 
 ## Bug 与问题记录

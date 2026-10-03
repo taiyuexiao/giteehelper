@@ -44,7 +44,7 @@
 
 ## 验证
 - `npm run typecheck` 通过；
-- `npm test` 60 项通过（`tests/` 下 12 个测试文件）；测试使用独立数据库 `data/test/giteehelper-test.db`，由 `pretest` 脚本先重置，因此不会触碰 `data/giteehelper.db`；
+- `npm test` 73 项通过（`tests/` 下 14 个测试文件）；测试使用独立数据库 `data/test/giteehelper-test.db`，由 `pretest` 脚本先重置，因此不会触碰 `data/giteehelper.db`；
 - `/api/health`、`/api/login`、`/api/dashboard`、`/api/graph` 冒烟通过；
 - 未认证访问业务 API 返回 401；
 - 误导性联调记录和 `[旧导入]` 数据可通过管理员清理接口或 CLI 删除。
@@ -57,7 +57,7 @@
 - 不可破坏的行为：WHEN 业务请求并发 THEN 系统 SHALL CONTINUE TO 使用 WAL 和外键约束。
 - 根因：测试文件并行持有数据库写事务，SQLite 默认 busy timeout 不足。
 - 解决方式：设置 `PRAGMA busy_timeout = 5000`，并以 `--test-concurrency=1` 运行测试。
-- 验证方式：`npm test` 稳定通过（当前 60 项）。
+- 验证方式：`npm test` 稳定通过（当前 73 项）。
 
 ## 已知限制
 - 单项目、单组织、单进程 Session；
