@@ -602,7 +602,7 @@ export interface PersonMetrics {
   emails: string[];
 }
 
-function toStamp(value: string | null | undefined): number {
+export function toStamp(value: string | null | undefined): number {
   if (!value) return 0;
   const stamp = Date.parse(value.includes("T") || value.includes("+") ? value : `${value.replace(" ", "T")}Z`);
   return Number.isFinite(stamp) ? stamp : 0;

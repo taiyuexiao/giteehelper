@@ -7,7 +7,7 @@ import {
   CONFLICT_SEVERITIES, describeImpacts, ingestCommit, recordWebhookDelivery, updateWebhookDelivery
 } from "./commits.js";
 import { buildCommitImpactCard, sendFeishuText, type CommitLine, type ImpactLine } from "./feishu.js";
-import { mineReferences, pullsTouchedBy, upsertPullFromWebhook } from "./pulls.js";
+import { mineReferences, pullsTouchedBy, upsertPullCommentFromWebhook, upsertPullFromWebhook } from "./pulls.js";
 import { authorsFromCommits } from "./progress.js";
 import { summarizeActivity } from "./summarize.js";
 import { queryAll as queryAllRows } from "./db.js";
@@ -180,6 +180,13 @@ export async function ingestGiteeWebhook(
     const unmergedReferences = mineReferences(`${event.title}\n${String(payload.body ?? "")}`)
       .filter((number) => !mergedNumbers.has(number))
       .slice(0, 5);
+
+    // note 事件增量落评论（时间线的评审事件）；失败不影响主流程
+    if (event.eventType === "note") {
+      try { upsertPullCommentFromWebhook(1, payload); } catch (error) {
+        console.error("[gitee webhook] 评论落库失败：", error instanceof Error ? error.message : error);
+      }
+    }
 
     const persisted = persistEventAndImpacts(event, 1, {
       pull: pullRow

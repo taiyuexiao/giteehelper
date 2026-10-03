@@ -17,7 +17,9 @@ import {
   aiAssociatePulls, applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, buildPullDetails,
   identitySuggestions, parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
+import { backfillPullComments } from "./pulls.js";
 import { buildProgressWorkbook } from "./export.js";
+import { buildTimeline } from "./timeline.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
 import { createRepairBundle } from "./repair.js";
 import { cleanupMisleadingData } from "./cleanup.js";
@@ -906,6 +908,20 @@ router.get("/progress/people", requireAuth, (_req, res) => {
 
 router.get("/progress/pulls", requireAuth, (_req, res) => {
   res.json(buildPullDetails());
+});
+
+router.get("/progress/timeline", requireAuth, (_req, res) => {
+  res.json(buildTimeline());
+});
+
+router.post("/progress/backfill-comments", requireAuth, requireAdmin, async (req, res) => {
+  // 分块执行：每次最多 max 个 PR 的评论，调用方循环到 remaining 为 0
+  const max = Math.min(Number((req.body as Record<string, unknown> | undefined)?.max) || 40, 200);
+  try {
+    res.json(await backfillPullComments({ max }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "comment backfill failed" });
+  }
 });
 
 router.get("/progress/export.xlsx", requireAuth, async (_req, res) => {

@@ -7,7 +7,7 @@ import { createIntegrationRun, listModules } from "../server/integration.js";
 import { createRepairBundle } from "../server/repair.js";
 import { cleanupMisleadingData } from "../server/cleanup.js";
 import { reanalyzeAll } from "../server/commits.js";
-import { backfillEventFiles, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
+import { backfillEventFiles, backfillPullComments, backfillPullHeads, pullStats, syncPullRequests } from "../server/pulls.js";
 import { aiAssociatePulls, backfillMergedFiles, backfillPullAuthors } from "../server/progress.js";
 import { applyPatternFixes, patternFixPreview, patternHealth } from "../server/repohealth.js";
 import { applyRfcPatterns, planRfcPatterns, rfcCoverage, syncRfcContracts } from "../server/rfccontract.js";
@@ -248,6 +248,13 @@ async function main() {
       }));
       return 0;
     }
+    case "backfill-comments": {
+      // 回填 PR 评论/评审（时间线的评审事件源）。分块可续跑：每次最多 --max 个 PR（默认 40）。
+      printJson(await backfillPullComments({
+        max: Number(args.find((item) => item.startsWith("--max="))?.slice(6)) || 40
+      }));
+      return 0;
+    }
     case "backfill-pull-authors": {
       // 回填 PR 的真实提交作者（PR 内 commit 署名邮箱）。登录账号是共用/代操作的，
       // author_login 不代表作者；人员指标按这个归属。分块可续跑，默认 --max=100。
@@ -298,6 +305,7 @@ Commands:
   giteehelper backfill-pull-head [--apply]
   giteehelper backfill-merged-files [--max=N]
   giteehelper backfill-pull-authors [--max=N]
+  giteehelper backfill-comments [--max=N]
   giteehelper ai-associate [--max=N]
   giteehelper rfc-sync
   giteehelper rfc-coverage

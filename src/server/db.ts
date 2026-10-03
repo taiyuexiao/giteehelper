@@ -282,6 +282,21 @@ CREATE TABLE IF NOT EXISTS module_group_aliases (
 
 -- 进度页：AI 补充关联（规则证据 ref/rfc/path 覆盖不到的 PR，由大模型判断归属，
 -- 看板里标为「AI 识别」级证据，可审计）。module_id 为 NULL 表示“已判断、无把握”
+-- 进度页时间线：PR 评论/评审（回填自 Gitee 两个端点 + WebHook note 增量）
+CREATE TABLE IF NOT EXISTS pull_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  pull_number INTEGER NOT NULL,
+  remote_id INTEGER,
+  source TEXT NOT NULL DEFAULT 'issue',
+  body TEXT NOT NULL DEFAULT '',
+  author_login TEXT,
+  author_name TEXT,
+  created_at TEXT,
+  url TEXT,
+  UNIQUE(project_id, pull_number, source, remote_id)
+);
+
 CREATE TABLE IF NOT EXISTS pull_task_ai (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

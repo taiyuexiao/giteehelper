@@ -521,3 +521,129 @@ export async function backfillPullHeads(
   }
   return { scanned, withoutHead, fixed, alreadyCorrect, unresolved, fetched, samples };
 }
+
+/* ---------- PR 评论：时间线的评审事件源 ---------- */
+
+export interface PullCommentRecord {
+  remoteId: number | null;
+  pullNumber: number;
+  source: "issue" | "pull" | "webhook";
+  body: string;
+  authorLogin: string | null;
+  authorName: string | null;
+  createdAt: string | null;
+  url: string | null;
+}
+
+function mapComment(number: number, raw: Record<string, unknown>, source: "issue" | "pull"): PullCommentRecord {
+  const user = (raw.user ?? {}) as Record<string, unknown>;
+  return {
+    remoteId: Number(raw.id ?? 0) || null,
+    pullNumber: number,
+    source,
+    body: String(raw.body ?? "").slice(0, 2000),
+    authorLogin: typeof user.login === "string" ? user.login : null,
+    authorName: typeof user.name === "string" ? user.name : null,
+    createdAt: typeof raw.created_at === "string" ? raw.created_at : null,
+    url: typeof raw.html_url === "string" ? raw.html_url : null
+  };
+}
+
+/**
+ * 拉一个 PR 的全部评论：会话评论（issues 端点）+ 行内评审（pulls 端点）。
+ * 两个端点的 id 空间独立，用 source 区分；时间线层再按 (number, remoteId) 去重。
+ */
+export async function fetchPullCommentRecords(number: number): Promise<PullCommentRecord[]> {
+  const out: PullCommentRecord[] = [];
+  const fetchEndpoint = async (path: string, source: "issue" | "pull") => {
+    for (let page = 1; page <= 2; page += 1) {
+      const rows = await giteeRequest<Array<Record<string, unknown>>>(`${path}?per_page=100&page=${page}`);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const row of rows) out.push(mapComment(number, row, source));
+      if (rows.length < 100) break;
+    }
+  };
+  const [owner, name] = (config.giteeRepo ?? "").split("/");
+  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+  await fetchEndpoint(`${base}/issues/${number}/comments`, "issue").catch(() => undefined);
+  await fetchEndpoint(`${base}/pulls/${number}/comments`, "pull").catch(() => undefined);
+  return out;
+}
+
+function saveComment(projectId: number, comment: PullCommentRecord) {
+  execute(
+    `INSERT INTO pull_comments (project_id, pull_number, remote_id, source, body, author_login, author_name, created_at, url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, pull_number, source, remote_id) DO UPDATE SET
+       body = excluded.body, author_login = excluded.author_login,
+       author_name = excluded.author_name, created_at = excluded.created_at, url = excluded.url`,
+    [projectId, comment.pullNumber, comment.remoteId, comment.source,
+     comment.body, comment.authorLogin, comment.authorName, comment.createdAt, comment.url]
+  );
+}
+
+/** 分块回填评论：每次最多 max 个 PR，返回 remaining 供循环 */
+export async function backfillPullComments(
+  options: { max?: number } = {},
+  projectId = 1
+): Promise<{ pulls: number; comments: number; remaining: number }> {
+  const max = Math.max(1, Math.min(options.max ?? 40, 200));
+  if (!config.giteeRepo || !config.giteeToken) throw new Error("GITEE_TOKEN 与 GITEE_REPO 未配置");
+  const done = new Set<number>(
+    queryAll<{ pullNumber: number }>(
+      `SELECT DISTINCT pull_number AS pullNumber FROM pull_comments WHERE project_id = ?`, [projectId]
+    ).map((row) => row.pullNumber)
+  );
+  const candidates = queryAll<{ number: number }>(
+    `SELECT number FROM pull_requests WHERE project_id = ? ORDER BY number DESC`, [projectId]
+  ).map((row) => row.number);
+  const targets = candidates.filter((number) => !done.has(number)).slice(0, max);
+  let comments = 0;
+  for (const number of targets) {
+    const records = await fetchPullCommentRecords(number).catch(() => [] as PullCommentRecord[]);
+    for (const record of records) {
+      saveComment(projectId, { ...record, pullNumber: number });
+      comments += 1;
+    }
+  }
+  return { pulls: targets.length, comments, remaining: Math.max(candidates.filter((n) => !done.has(n)).length - targets.length, 0) };
+}
+
+/** WebHook note 事件增量落评论（PR 会话评论）；pull_number 靠 noteable_id 反查 */
+export function upsertPullCommentFromWebhook(projectId: number, payload: Record<string, unknown>) {
+  const note = (payload.note ?? {}) as Record<string, unknown>;
+  const noteId = Number(note.id ?? 0) || 0;
+  if (!noteId) return null;
+  let number = Number(payload.number ?? payload.iid ?? 0) || 0;
+  if (!number) {
+    const noteableId = Number(payload.noteable_id ?? 0) || 0;
+    if (noteableId) {
+      number = Number(
+        queryOne<{ number: number }>(
+          `SELECT number FROM pull_requests WHERE project_id = ? AND remote_id = ?`,
+          [projectId, noteableId]
+        )?.number ?? 0
+      );
+    }
+  }
+  if (!number) return null;
+  const user = (note.user ?? {}) as Record<string, unknown>;
+  const record: PullCommentRecord = {
+    remoteId: noteId,
+    pullNumber: number,
+    source: "webhook",
+    body: String(note.body ?? "").slice(0, 2000),
+    authorLogin: typeof user.login === "string" ? user.login : null,
+    authorName: typeof user.name === "string" ? user.name : null,
+    createdAt: typeof note.created_at === "string" ? note.created_at : null,
+    url: typeof note.html_url === "string" ? note.html_url : null
+  };
+  execute(
+    `INSERT INTO pull_comments (project_id, pull_number, remote_id, source, body, author_login, author_name, created_at, url)
+     VALUES (?, ?, ?, 'webhook', ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, pull_number, source, remote_id) DO UPDATE SET
+       body = excluded.body, created_at = excluded.created_at`,
+    [projectId, record.pullNumber, record.remoteId, record.body, record.authorLogin, record.authorName, record.createdAt, record.url]
+  );
+  return record;
+}

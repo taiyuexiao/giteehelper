@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ClipboardList, Download, ExternalLink, GitCommitHorizontal, ListChecks, RefreshCw, Users } from "lucide-react";
 import { api, downloadFile } from "../api";
 import { EmptyState, Loading, Modal, PageHeader, StatusBadge } from "../components";
+import TimelineTab from "./TimelineTab";
 import type { Role } from "../../shared/types";
 
 type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
@@ -712,7 +713,7 @@ function PullRecordModal({ details, onClose }: { details: PullDetail[]; onClose:
 /* ---------- 页面 ---------- */
 
 export default function ProgressPage() {
-  const [tab, setTab] = useState<"board" | "people">("board");
+  const [tab, setTab] = useState<"board" | "people" | "timeline">("board");
   const [board, setBoard] = useState<BoardData | null>(null);
   const [people, setPeople] = useState<PersonMetrics[] | null>(null);
   const [details, setDetails] = useState<PullDetail[] | null>(null);
@@ -764,8 +765,11 @@ export default function ProgressPage() {
           <div className="view-switcher progress-tabs" role="tablist">
             <button className={tab === "board" ? "active" : ""} onClick={() => setTab("board")}>任务全景</button>
             <button className={tab === "people" ? "active" : ""} onClick={() => setTab("people")}>个人成长轨迹</button>
+            <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")}>时间线</button>
           </div>
-          {tab === "board" ? <Board data={board} /> : <People people={people} details={details} />}
+          {tab === "board" && <Board data={board} />}
+          {tab === "people" && <People people={people} details={details} />}
+          {tab === "timeline" && <TimelineTab />}
         </>
       )}
     </>
