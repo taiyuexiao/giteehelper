@@ -256,8 +256,6 @@ ensureColumn("pull_requests", "remote_id", "INTEGER");
 // Gitee 账号是共用的/代操作的，author_login 不代表作者；NULL=未回填，[]=回填过但没有可用署名
 ensureColumn("pull_requests", "authors_json", "TEXT");
 
-// AI/人工补充关联的来源标记（ai | manual），旧库补列
-ensureColumn("pull_task_ai", "source", "TEXT NOT NULL DEFAULT 'ai'");
 
 // 进度页：group_name 标记任务所属顶层模块（NULL = 顶层模块本身）；身份别名表对齐
 // Gitee 账号 / git 署名 / 匿名用户名（如 用户205243）到真实成员
@@ -309,6 +307,9 @@ CREATE TABLE IF NOT EXISTS pull_task_ai (
   UNIQUE(project_id, pull_number, module_id)
 );
 `);
+
+// AI/人工补充关联的来源标记（ai | manual），旧库补列（必须在建表之后执行）
+ensureColumn("pull_task_ai", "source", "TEXT NOT NULL DEFAULT 'ai'");
 
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
 db.exec(`
