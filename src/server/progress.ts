@@ -61,8 +61,8 @@ export interface Association {
   evidence: "ref" | "rfc" | "path";
 }
 
-/** 看板关联证据：ref/rfc/path 为确定性规则，ai 为大模型补充识别（可审计） */
-export type EvidenceKind = Association["evidence"] | "ai";
+/** 看板关联证据：ref/rfc/path 为确定性规则，ai 为大模型补充识别，manual 为人工挂接（均可审计） */
+export type EvidenceKind = Association["evidence"] | "ai" | "manual";
 
 const WORK_REF_RE = /\b([A-Za-z]{2,10}-\d{1,6})\b/g;
 const DOCS_PATH_RE = /^docs\//i;
@@ -335,15 +335,15 @@ export function buildBoard(projectId = 1): BoardData {
   }
   // AI 补充关联：规则证据（ref/rfc/path）覆盖不到的 PR，由大模型判断并落库（pull_task_ai），
   // 看板中标为「AI 识别」级证据，与确定性证据区分
-  for (const row of queryAll<{ pullNumber: number; moduleId: number }>(
-    `SELECT pull_number AS pullNumber, module_id AS moduleId FROM pull_task_ai WHERE project_id = ?`, [projectId]
+  for (const row of queryAll<{ pullNumber: number; moduleId: number; source: string }>(
+    `SELECT pull_number AS pullNumber, module_id AS moduleId, source FROM pull_task_ai WHERE project_id = ?`, [projectId]
   )) {
     const pull = pulls.find((item) => item.number === row.pullNumber);
     if (!pull || !tasks.some((task) => task.id === row.moduleId)) continue;
     if (associatePull(pull, tasks, rfcIndex).length) continue; // 规则证据优先
     const kind = classifyPullKind(pull.files, pull.title);
     const list = byModule.get(row.moduleId) ?? [];
-    list.push({ kind, pull, evidence: "ai" });
+    list.push({ kind, pull, evidence: row.source === "manual" ? "manual" : "ai" });
     byModule.set(row.moduleId, list);
   }
 

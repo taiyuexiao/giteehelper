@@ -375,7 +375,7 @@ function TaskDrawer({ task, onClose }: { task: BoardTask; onClose: () => void })
         {merged.length > 0 && <h3>已合并</h3>}
         {merged.map((pull) => (
           <a key={pull.number} className="progress-pr" href={pull.url ?? "#"} target="_blank" rel="noreferrer">
-            <span>!{pull.number} {pull.title}{pull.evidence === "ai" && <em className="ai-tag">AI 识别</em>}</span>
+            <span>!{pull.number} {pull.title}{(pull.evidence === "ai" || pull.evidence === "manual") && <em className="ai-tag">{pull.evidence === "manual" ? "人工确认" : "AI 识别"}</em>}</span>
             <small>{timeAgo(pull.mergedAt)} · {pull.authorLogin ?? "—"} <ExternalLink size={12} /></small>
           </a>
         ))}

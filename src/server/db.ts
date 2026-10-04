@@ -301,6 +301,7 @@ CREATE TABLE IF NOT EXISTS pull_task_ai (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   pull_number INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'ai',
   module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
   decided_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, pull_number, module_id)
