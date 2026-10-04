@@ -1260,10 +1260,11 @@ export function associationCandidates(projectId = 1): AssociationCandidate[] {
         author: info.authors.map((a) => a.name ?? a.email ?? "?").join("、"),
         mergedAt: info.mergedAt
       });
-      if (out.length >= 100) return out;
+      if (out.length >= 150) break;
     }
   }
-  return out;
+  // 最近合并的排前面：老的 PR 多是任务结构建立前的噪音
+  return out.sort((a, b) => (b.mergedAt ?? "").localeCompare(a.mergedAt ?? ""));
 }
 
 function pathByModuleGet(projectId: number, moduleId: number): string[] {
