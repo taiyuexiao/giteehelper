@@ -178,8 +178,10 @@ export function associatePull(
     }
   };
 
-  // 编号证据也扫分支名：这个仓库的分支约定直接编码任务号（feat/yuanyt/BOSC-0100-...）
-  for (const key of extractWorkRefs(`${pull.title}\n${pull.body}\n${pull.headRef ?? ""}`)) {
+  // 编号证据只认标题与分支（团队交付约定写在这两处，feat/zhusl/BOSC-0029-...）。
+  // PR 正文里的编号多是 RFC 交叉引用（"关联 BOSC-0034"），不是交付声明——曾把师沛琳的
+  // 评分规则库 RFC 驱动成朱苏立表格导入任务的"完成"，正文编号不进证据链。
+  for (const key of extractWorkRefs(`${pull.title}\n${pull.headRef ?? ""}`)) {
     const task = tasks.find((item) => item.key === key);
     if (task) add(task.id, "ref");
   }
