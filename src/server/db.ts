@@ -256,6 +256,9 @@ ensureColumn("pull_requests", "remote_id", "INTEGER");
 // Gitee 账号是共用的/代操作的，author_login 不代表作者；NULL=未回填，[]=回填过但没有可用署名
 ensureColumn("pull_requests", "authors_json", "TEXT");
 
+// AI/人工补充关联的来源标记（ai | manual），旧库补列
+ensureColumn("pull_task_ai", "source", "TEXT NOT NULL DEFAULT 'ai'");
+
 // 进度页：group_name 标记任务所属顶层模块（NULL = 顶层模块本身）；身份别名表对齐
 // Gitee 账号 / git 署名 / 匿名用户名（如 用户205243）到真实成员
 ensureColumn("modules", "group_name", "TEXT");
@@ -301,7 +304,6 @@ CREATE TABLE IF NOT EXISTS pull_task_ai (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   pull_number INTEGER NOT NULL,
-  source TEXT NOT NULL DEFAULT 'ai',
   module_id INTEGER REFERENCES modules(id) ON DELETE CASCADE,
   decided_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, pull_number, module_id)
