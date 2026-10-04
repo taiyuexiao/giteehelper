@@ -340,11 +340,12 @@ export function buildBoard(projectId = 1): BoardData {
   )) {
     const pull = pulls.find((item) => item.number === row.pullNumber);
     if (!pull || !tasks.some((task) => task.id === row.moduleId)) continue;
-    if (associatePull(pull, tasks, rfcIndex).length) continue; // 规则证据优先
+    // 一条 PR 可以归属多个任务（共享 RFC/代码面）；只跳过已存在的 (PR, 任务) 对，规则证据优先
+    const existing = byModule.get(row.moduleId) ?? [];
+    if (existing.some((item) => item.pull.number === row.pullNumber)) continue;
     const kind = classifyPullKind(pull.files, pull.title);
-    const list = byModule.get(row.moduleId) ?? [];
-    list.push({ kind, pull, evidence: row.source === "manual" ? "manual" : "ai" });
-    byModule.set(row.moduleId, list);
+    existing.push({ kind, pull, evidence: row.source === "manual" ? "manual" : "ai" });
+    byModule.set(row.moduleId, existing);
   }
 
   const userNameById = new Map<number, string>();
