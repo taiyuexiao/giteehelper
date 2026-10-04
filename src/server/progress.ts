@@ -45,6 +45,8 @@ export interface PullCore {
   additions: number;
   deletions: number;
   files: string[];
+  /** 提交作者数：≥3 视为合并同步类集成 PR */
+  authorCount?: number;
 }
 
 export interface TaskModule {
@@ -102,18 +104,31 @@ export function rfcSlugsOfFiles(files: string[]): string[] {
  * 没有文件时按标题猜（docs: 前缀 / 提到 RFC）。文件回填后分类会自动变准。
  */
 export function classifyPullKind(files: string[], title: string): PullKind {
+  // docs 标题优先：RFC/文档 PR 常夹带少量 schema 快照等后端文件，但性质仍是文档交付
+  if (/^docs?\s*[(:]/i.test(title ?? "")) return "doc";
   const list = (files ?? []).filter(Boolean);
   if (list.length) return list.every((file) => DOCS_PATH_RE.test(file)) ? "doc" : "code";
-  if (/^docs?\s*[(:]/i.test(title ?? "") || /\brfc\b/i.test(title ?? "")) return "doc";
+  if (/\brfc\b/i.test(title ?? "")) return "doc";
   return "unknown";
 }
 
-/** 任务五态：merged 才算完成；unknown 类按代码处理（文件回填后自动纠正） */
-export function taskStateOf(pulls: Array<{ kind: PullKind; state: string }>): TaskState {
-  if (pulls.some((p) => p.kind !== "doc" && p.state === "merged")) return "done";
-  if (pulls.some((p) => p.kind !== "doc" && p.state === "open")) return "developing";
-  if (pulls.some((p) => p.kind === "doc" && p.state === "merged")) return "designed";
-  if (pulls.some((p) => p.kind === "doc" && p.state === "open")) return "designing";
+/**
+ * 合并同步/集成 PR：由集成人把学员分支卷进主干（标题含「合并同步 / 进 main 前」，
+ * 或共同作者 ≥3——真实功能 PR 在这个团队是 1~2 人）。这类 PR 触碰全仓库文件，
+ * 参与 rfc/path 关联会把所有相关任务点亮，因此不计入任务状态驱动。
+ */
+export function isMergeSync(title: string, authorCount: number): boolean {
+  if (/合并同步|merge\s+sync|进\s*main\s*前/i.test(title ?? "")) return true;
+  return authorCount >= 3;
+}
+
+/** 任务五态：merged 才算完成；unknown 类按代码处理（文件回填后自动纠正）；合并同步 PR 不驱动状态 */
+export function taskStateOf(pulls: Array<{ kind: PullKind; state: string; sync?: boolean }>): TaskState {
+  const real = pulls.filter((p) => !p.sync);
+  if (real.some((p) => p.kind !== "doc" && p.state === "merged")) return "done";
+  if (real.some((p) => p.kind !== "doc" && p.state === "open")) return "developing";
+  if (real.some((p) => p.kind === "doc" && p.state === "merged")) return "designed";
+  if (real.some((p) => p.kind === "doc" && p.state === "open")) return "designing";
   return "not_started";
 }
 
@@ -231,6 +246,8 @@ export interface BoardTaskPull {
   authorLogin: string | null;
   /** ref/rfc/path = 确定性证据；ai = 大模型补充识别（可审计） */
   evidence: EvidenceKind;
+  /** 合并同步类集成 PR：不驱动任务状态 */
+  sync: boolean;
 }
 
 export interface BoardTask {
@@ -320,7 +337,8 @@ export function buildBoard(projectId = 1): BoardData {
   };
   const pulls = queryAll<Record<string, unknown>>(
     `SELECT number, title, body, state, author_login AS authorLogin, head_ref AS headRef, created_at AS createdAt,
-            updated_at AS updatedAt, merged_at AS mergedAt, additions, deletions, files_json AS filesJson
+            updated_at AS updatedAt, merged_at AS mergedAt, additions, deletions, files_json AS filesJson,
+            authors_json AS authorsJson
      FROM pull_requests WHERE project_id = ?`,
     [projectId]
   ).map((row): PullCore => ({
@@ -336,15 +354,16 @@ export function buildBoard(projectId = 1): BoardData {
     mergedAt: (row.mergedAt as string | null) ?? null,
     additions: Number(row.additions ?? 0) || 0,
     deletions: Number(row.deletions ?? 0) || 0,
-    files: parseJson<string[]>(row.filesJson, [])
+    files: parseJson<string[]>(row.filesJson, []),
+    authorCount: parseJson<Array<unknown>>(row.authorsJson, []).length || undefined
   }));
 
-  const byModule = new Map<number, Array<{ kind: PullKind; pull: PullCore; evidence: EvidenceKind }>>();
+  const byModule = new Map<number, Array<{ kind: PullKind; pull: PullCore; evidence: EvidenceKind; sync: boolean }>>();
   for (const pull of pulls) {
     for (const association of associatePull(pull, tasks, rfcIndex)) {
       const kind = classifyPullKind(pull.files, pull.title);
       const list = byModule.get(association.moduleId) ?? [];
-      list.push({ kind, pull, evidence: association.evidence });
+      list.push({ kind, pull, evidence: association.evidence, sync: isMergeSync(pull.title, pull.authorCount ?? 1) });
       byModule.set(association.moduleId, list);
     }
   }
@@ -360,7 +379,7 @@ export function buildBoard(projectId = 1): BoardData {
     const existing = byModule.get(row.moduleId) ?? [];
     if (existing.some((item) => item.pull.number === row.pullNumber)) continue;
     const kind = classifyPullKind(pull.files, pull.title);
-    existing.push({ kind, pull, evidence: row.source === "manual" ? "manual" : "ai" });
+    existing.push({ kind, pull, evidence: row.source === "manual" ? "manual" : "ai", sync: isMergeSync(pull.title, pull.authorCount ?? 1) });
     byModule.set(row.moduleId, existing);
   }
 
@@ -393,11 +412,11 @@ export function buildBoard(projectId = 1): BoardData {
       name: task.name,
       ownerUserId: task.ownerUserId,
       ownerName: task.ownerUserId ? userNameById.get(task.ownerUserId) ?? null : null,
-      state: taskStateOf(associated.map((item) => ({ kind: item.kind, state: item.pull.state }))),
-      docMerged: associated.filter((item) => item.kind === "doc" && item.pull.state === "merged").length,
-      docOpen: associated.filter((item) => item.kind === "doc" && item.pull.state === "open").length,
-      codeMerged: associated.filter((item) => item.kind !== "doc" && item.pull.state === "merged").length,
-      codeOpen: associated.filter((item) => item.kind !== "doc" && item.pull.state === "open").length,
+      state: taskStateOf(associated.map((item) => ({ kind: item.kind, state: item.pull.state, sync: item.sync }))),
+      docMerged: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "merged").length,
+      docOpen: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "open").length,
+      codeMerged: associated.filter((item) => item.kind !== "doc" && !item.sync && item.pull.state === "merged").length,
+      codeOpen: associated.filter((item) => item.kind !== "doc" && !item.sync && item.pull.state === "open").length,
       lastActivityAt: associated
         .map((item) => item.pull.mergedAt ?? item.pull.updatedAt ?? item.pull.createdAt)
         .filter(Boolean)
@@ -428,7 +447,8 @@ export function buildBoard(projectId = 1): BoardData {
           url: item.pull.url,
           mergedAt: item.pull.mergedAt,
           authorLogin: item.pull.authorLogin,
-          evidence: item.evidence
+          evidence: item.evidence,
+          sync: item.sync
         }))
     };
     const top = matchTop(groupName);
