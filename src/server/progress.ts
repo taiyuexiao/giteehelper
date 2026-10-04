@@ -122,11 +122,17 @@ export function isMergeSync(title: string, authorCount: number): boolean {
   return authorCount >= 3;
 }
 
-/** 任务五态：merged 才算完成；unknown 类按代码处理（文件回填后自动纠正）；合并同步 PR 不驱动状态 */
-export function taskStateOf(pulls: Array<{ kind: PullKind; state: string; sync?: boolean }>): TaskState {
+/**
+ * 任务五态：merged 才算完成。状态驱动只认**强证据**（ref=标题/分支明确写任务编号、
+ * manual=人工确认；调用方不传 evidence 时按强证据处理以兼容旧调用）；
+ * path/rfc 共享模式与 ai 关联只是线索，进抽屉但不点亮任务；合并同步 PR 一律不驱动。
+ */
+export function taskStateOf(pulls: Array<{ kind: PullKind; state: string; sync?: boolean; evidence?: EvidenceKind }>): TaskState {
+  const strong = (p: { evidence?: EvidenceKind }) =>
+    p.evidence === undefined || p.evidence === "ref" || p.evidence === "manual";
   const real = pulls.filter((p) => !p.sync);
-  if (real.some((p) => p.kind !== "doc" && p.state === "merged")) return "done";
-  if (real.some((p) => p.kind !== "doc" && p.state === "open")) return "developing";
+  if (real.some((p) => p.kind !== "doc" && strong(p) && p.state === "merged")) return "done";
+  if (real.some((p) => p.kind !== "doc" && strong(p) && p.state === "open")) return "developing";
   if (real.some((p) => p.kind === "doc" && p.state === "merged")) return "designed";
   if (real.some((p) => p.kind === "doc" && p.state === "open")) return "designing";
   return "not_started";
@@ -358,9 +364,16 @@ export function buildBoard(projectId = 1): BoardData {
     authorCount: parseJson<Array<unknown>>(row.authorsJson, []).length || undefined
   }));
 
+  const dismissedPairs = new Set(
+    queryAll<{ pullNumber: number; moduleId: number }>(
+      `SELECT pull_number AS pullNumber, module_id AS moduleId FROM pull_task_ai
+       WHERE project_id = ? AND source = 'dismissed' AND module_id IS NOT NULL`, [projectId]
+    ).map((row) => `${row.pullNumber}:${row.moduleId}`)
+  );
   const byModule = new Map<number, Array<{ kind: PullKind; pull: PullCore; evidence: EvidenceKind; sync: boolean }>>();
   for (const pull of pulls) {
     for (const association of associatePull(pull, tasks, rfcIndex)) {
+      if (dismissedPairs.has(`${pull.number}:${association.moduleId}`)) continue; // 人工忽略的错挂
       const kind = classifyPullKind(pull.files, pull.title);
       const list = byModule.get(association.moduleId) ?? [];
       list.push({ kind, pull, evidence: association.evidence, sync: isMergeSync(pull.title, pull.authorCount ?? 1) });
@@ -412,7 +425,7 @@ export function buildBoard(projectId = 1): BoardData {
       name: task.name,
       ownerUserId: task.ownerUserId,
       ownerName: task.ownerUserId ? userNameById.get(task.ownerUserId) ?? null : null,
-      state: taskStateOf(associated.map((item) => ({ kind: item.kind, state: item.pull.state, sync: item.sync }))),
+      state: taskStateOf(associated.map((item) => ({ kind: item.kind, state: item.pull.state, sync: item.sync, evidence: item.evidence }))),
       docMerged: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "merged").length,
       docOpen: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "open").length,
       codeMerged: associated.filter((item) => item.kind !== "doc" && !item.sync && item.pull.state === "merged").length,

@@ -121,9 +121,11 @@ test("带库的全景：按导入数据算出五态与分组", () => {
       `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name, paths_json) VALUES (?, ?, ?, ?, '进度测试域', ?)`,
       [projectId, key, name, owner, paths]
     ).lastInsertRowid;
-  const doneTask = Number(mkTask("work-prog-done", "进度 · 已完成", JSON.stringify(["src/prog-done/**"])));
-  const devTask = Number(mkTask("work-prog-dev", "进度 · 开发中", JSON.stringify(["src/prog-dev/**"])));
+  const doneTask = Number(mkTask("work-bosc-9002", "进度 · 已完成", JSON.stringify(["src/prog-done/**"])));
+  const devTask = Number(mkTask("work-bosc-9003", "进度 · 开发中", JSON.stringify(["src/prog-dev/**"])));
   const designedTask = Number(mkTask("work-prog-designed", "进度报告 · 设计定稿", JSON.stringify(["docs/prog/**"])));
+  // 仅路径线索命中（无标题编号）的任务：进抽屉但不点亮——横切改造 PR 不驱动功能交付状态
+  const leadTask = Number(mkTask("work-prog-lead", "进度 · 仅路径线索", JSON.stringify(["src/prog-designed/**"])));
   // 能力域名与顶层模块名不一致时走别名表（生产上 执行与证据 → 运行 就是这种）
   execute(
     `INSERT INTO module_group_aliases (project_id, group_name, module_id) VALUES (?, '进度测试域报告线', (SELECT id FROM modules WHERE module_key = 'prog-report' AND project_id = ?))`,
@@ -141,8 +143,8 @@ test("带库的全景：按导入数据算出五态与分组", () => {
         [projectId, number, title, state, JSON.stringify(files)]
       );
     mkPull(9001, "merged", ["docs/prog/rfc.mdx"], "docs: 进度测试 RFC");
-    mkPull(9002, "merged", ["src/prog-done/A.java"], "feat: 进度测试完成");
-    mkPull(9003, "open", ["src/prog-dev/A.java"], "feat: 进度测试开发中");
+    mkPull(9002, "merged", ["src/prog-done/A.java"], "feat(BOSC-9002): 进度测试完成");
+    mkPull(9003, "open", ["src/prog-dev/A.java"], "feat(BOSC-9003): 进度测试开发中");
     mkPull(9004, "merged", ["src/prog-designed/B.java"], "feat: 不相关的旧提交");
 
     const board = buildBoard(projectId);
@@ -156,11 +158,13 @@ test("带库的全景：按导入数据算出五态与分组", () => {
     assert.ok(reportGroup, "别名分组应存在");
     assert.equal(reportGroup.ownerName, "系统管理员");
     assert.equal(reportGroup.tasks.find((task) => task.moduleId === designedTask)?.state, "designed");
+    // 仅路径线索（!9004 触碰 src/prog-designed/** 但标题无编号）不点亮任务
+    assert.equal(byId.get(leadTask)?.state, "not_started", "路径线索只是线索，不驱动完成");
     assert.equal(board.summary.total >= 3, true);
   } finally {
     execute(`DELETE FROM pull_requests WHERE project_id = ? AND number BETWEEN 9001 AND 9004`, [projectId]);
     execute(`DELETE FROM module_group_aliases WHERE project_id = ? AND group_name = '进度测试域报告线'`, [projectId]);
-    execute(`DELETE FROM modules WHERE project_id = ? AND (module_key LIKE 'work-prog-%' OR module_key IN ('prog-top', 'prog-report'))`, [projectId]);
+    execute(`DELETE FROM modules WHERE project_id = ? AND (module_key LIKE 'work-prog-%' OR module_key IN ('prog-top', 'prog-report', 'work-bosc-9002', 'work-bosc-9003'))`, [projectId]);
   }
 });
 
