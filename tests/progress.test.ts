@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  associatePull, authorsFromCommits, buildBoard, buildUserIndex, classifyPullKind, extractWorkRefs,
-  groupOf, parseAssignmentCsv, rfcSlugsOfFiles, taskStateOf, upsertIdentityAlias,
-  type PullCore, type TaskModule
+  associatePull, associationCandidates, authorsFromCommits, buildBoard, buildUserIndex, classifyPullKind,
+  confirmAssociation, extractWorkRefs, groupOf, parseAssignmentCsv, rfcSlugsOfFiles, taskStateOf,
+  upsertIdentityAlias, type PullCore, type TaskModule
 } from "../src/server/progress.js";
 import { execute, queryOne } from "../src/server/db.js";
 import { seed } from "../src/server/seed.js";
@@ -194,4 +194,67 @@ test("PR 作者解析：剔除 Merge 同步提交，全 Merge 时退回 head 提
     { sha: "b1", email: "guxiang@dev.bosc", name: "Gu Xiang", message: "Merge branch 'main'", date: "2026-09-29T10:00:00+08:00" }
   ], "b1abcdef");
   assert.deepEqual(headOnly, [{ name: "Gu Xiang", email: "guxiang@dev.bosc" }]);
+});
+
+test("任务三面交付微状态与漏挂候选确认流", () => {
+  const projectId = queryOne<{ id: number }>(`SELECT id FROM projects ORDER BY id LIMIT 1`)!.id;
+  const owner = queryOne<{ id: number }>(`SELECT id FROM users WHERE display_name = '系统管理员'`)!.id;
+  execute(
+    `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name) VALUES (?, 'audit-top', '审计测试域', ?, NULL)`,
+    [projectId, owner]
+  );
+  const mk = (key: string, name: string, paths: string) =>
+    Number(execute(
+      `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name, paths_json)
+       VALUES (?, ?, ?, ?, '审计测试域', ?)`,
+      [projectId, key, name, owner, paths]
+    ).lastInsertRowid);
+  // 任务 A：声明了前端交付面，但只合并了后端 PR → frontendPending
+  const taskA = mk("work-audit-fe", "审计 · 有前端面", JSON.stringify(["frontend/audit/**", "src/audit/**"]));
+  // 任务 B：无模式、未开始，负责人本人提交的已合并 PR 没关联上 → 漏挂候选
+  const taskB = mk("work-audit-none", "审计 · 漏挂", JSON.stringify(["src/nowhere/**"]));
+  execute(
+    `INSERT INTO modules (project_id, module_key, name, owner_user_id, group_name) VALUES (?, 'audit-plain', '审计 · 无模式任务', ?, '审计测试域')`,
+    [projectId, owner]
+  );
+  const taskB2 = Number(queryOne(`SELECT id FROM modules WHERE module_key = 'audit-plain'`)!.id);
+  upsertIdentityAlias("audit@test.dev", owner, projectId);
+  try {
+    execute(
+      `INSERT INTO pull_requests (project_id, number, title, body, state, head_ref, files_json, authors_json)
+       VALUES (?, 9201, 'feat: 后端审计', '', 'merged', 'feat/audit', ?, ?)`,
+      [projectId, JSON.stringify(["src/audit/A.java"]), JSON.stringify([{ name: "Tester", email: "audit@test.dev" }])]
+    );
+    execute(
+      `INSERT INTO pull_requests (project_id, number, title, body, state, head_ref, files_json, authors_json)
+       VALUES (?, 9202, 'feat: 负责人直接交付', '', 'merged', 'feat/audit-none', ?, ?)`,
+      [projectId, JSON.stringify(["src/mystery/X.java"]), JSON.stringify([{ name: "Tester", email: "audit@test.dev" }])]
+    );
+
+    let board = buildBoard(projectId);
+    let group = board.groups.find((item) => item.name === "审计测试域")!;
+    let byId = new Map(group.tasks.map((task) => [task.moduleId, task]));
+    assert.equal(byId.get(taskA)?.sub.backend, true, "后端面已交付");
+    assert.equal(byId.get(taskA)?.sub.frontend, false, "前端面未交付");
+    assert.equal(byId.get(taskA)?.frontendPending, true, "声明了前端面但未交付 → 前端未动");
+
+    // 漏挂候选：任务 B/B2 由负责人本人交付了已合并 PR
+    const candidates1 = associationCandidates(projectId).filter((item) => item.group === "审计测试域");
+    assert.ok(candidates1.some((item) => item.moduleId === taskB2 && item.pullNumber === 9202), "无模式任务应出现在候选里");
+    assert.ok(!candidates1.some((item) => item.moduleId === taskA && item.pullNumber === 9201), "9201 已按模式关联，不是候选");
+
+    // 确认挂接 → 任务 B2 变 done，候选消失
+    confirmAssociation(9202, taskB2, projectId);
+    board = buildBoard(projectId);
+    group = board.groups.find((item) => item.name === "审计测试域")!;
+    byId = new Map(group.tasks.map((task) => [task.moduleId, task]));
+    assert.equal(byId.get(taskB2)?.state, "done", "确认挂接后任务点亮");
+    const candidates2 = associationCandidates(projectId).filter((item) => item.group === "审计测试域");
+    assert.equal(candidates2.some((item) => item.moduleId === taskB2 && item.pullNumber === 9202), false, "确认后不再出现");
+  } finally {
+    execute(`DELETE FROM pull_task_ai WHERE project_id = ? AND pull_number IN (9201, 9202)`, [projectId]);
+    execute(`DELETE FROM pull_requests WHERE project_id = ? AND number IN (9201, 9202)`, [projectId]);
+    execute(`DELETE FROM identity_aliases WHERE project_id = ? AND alias = 'audit@test.dev'`, [projectId]);
+    execute(`DELETE FROM modules WHERE project_id = ? AND (module_key LIKE 'work-audit-%' OR module_key IN ('audit-top', 'audit-plain'))`, [projectId]);
+  }
 });

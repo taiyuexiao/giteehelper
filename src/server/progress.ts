@@ -212,6 +212,15 @@ export function groupOf(module: { key: string; group: string | null; description
   return module.key.startsWith("work-") ? "未分组" : null;
 }
 
+export interface TaskSubStates {
+  /** 已合并代码 PR 触碰过 src/（后端） */
+  backend: boolean;
+  /** 已合并代码 PR 触碰过 frontend/ */
+  frontend: boolean;
+  /** 已合并代码 PR 触碰过 docs/（混合型 PR 的文档部分） */
+  docs: boolean;
+}
+
 export interface BoardTaskPull {
   number: number;
   title: string;
@@ -238,6 +247,10 @@ export interface BoardTask {
   lastActivityAt: string | null;
   authorLogins: string[];
   pulls: BoardTaskPull[];
+  /** 后端/前端/文档 三面交付微状态（由已合并代码 PR 的文件路径推导） */
+  sub: TaskSubStates;
+  /** 任务声明了前端交付面（路径含 frontend/**）但还没有已合并 PR 触碰 frontend/ */
+  frontendPending: boolean;
 }
 
 export interface BoardGroup {
@@ -245,6 +258,8 @@ export interface BoardGroup {
   moduleId: number | null;
   ownerUserId: number | null;
   ownerName: string | null;
+  /** 该组全部任务负责人的并集（共同负责的域这里看得全） */
+  ownerNames: string[];
   tasks: BoardTask[];
   summary: Record<TaskState, number>;
 }
@@ -336,7 +351,8 @@ export function buildBoard(projectId = 1): BoardData {
   // AI 补充关联：规则证据（ref/rfc/path）覆盖不到的 PR，由大模型判断并落库（pull_task_ai），
   // 看板中标为「AI 识别」级证据，与确定性证据区分
   for (const row of queryAll<{ pullNumber: number; moduleId: number; source: string }>(
-    `SELECT pull_number AS pullNumber, module_id AS moduleId, source FROM pull_task_ai WHERE project_id = ?`, [projectId]
+    `SELECT pull_number AS pullNumber, module_id AS moduleId, source FROM pull_task_ai
+     WHERE project_id = ? AND source IN ('ai', 'manual')`, [projectId]
   )) {
     const pull = pulls.find((item) => item.number === row.pullNumber);
     if (!pull || !tasks.some((task) => task.id === row.moduleId)) continue;
@@ -388,6 +404,18 @@ export function buildBoard(projectId = 1): BoardData {
         .sort()
         .at(-1) ?? null,
       authorLogins: [...new Set(associated.map((item) => item.pull.authorLogin).filter(Boolean) as string[])],
+      sub: (() => {
+        const files = associated
+          .filter((item) => item.pull.state === "merged" && item.kind !== "doc")
+          .flatMap((item) => item.pull.files);
+        return {
+          backend: files.some((f) => !/^frontend\//.test(f) && !/^docs\//.test(f)),
+          frontend: files.some((f) => /^frontend\//.test(f)),
+          docs: files.some((f) => /^docs\//.test(f))
+        };
+      })(),
+      frontendPending: task.paths.some((p) => p.startsWith("frontend/"))
+        && !associated.some((item) => item.pull.state === "merged" && item.kind !== "doc" && item.pull.files.some((f) => /^frontend\//.test(f))),
       pulls: associated
         .slice()
         .sort((a, b) => b.pull.number - a.pull.number)
@@ -409,9 +437,14 @@ export function buildBoard(projectId = 1): BoardData {
       moduleId: top?.id ?? null,
       ownerUserId: top?.ownerUserId ?? null,
       ownerName: top?.ownerName ?? null,
+      ownerNames: [],
       tasks: [],
       summary: emptySummary()
     };
+    if (boardTask.ownerName) {
+      const count = group.ownerNames.filter((name) => name === boardTask.ownerName).length;
+      if (!count) group.ownerNames.push(boardTask.ownerName);
+    }
     group.tasks.push(boardTask);
     group.summary[boardTask.state] += 1;
     groups.set(groupName, group);
@@ -1157,4 +1190,103 @@ export async function aiAssociatePulls(
   }
   const remaining = unlinked.filter((pull) => !processed.has(pull.number) && !targets.includes(pull)).length;
   return { scanned: targets.length, linked, remaining };
+}
+
+/* ---------- 漏挂候选：负责人本人提交过、但没关联到任务的已合并 PR ---------- */
+
+export interface AssociationCandidate {
+  moduleId: number;
+  moduleKey: string;
+  taskName: string;
+  group: string | null;
+  ownerName: string | null;
+  pullNumber: number;
+  pullTitle: string;
+  author: string;
+  mergedAt: string | null;
+}
+
+/**
+ * 找「负责人本人是某已合并代码 PR 的提交作者，但该 PR 未关联到此任务」的候选对。
+ * 只针对还没有合并代码 PR 的任务（done/developing 的不需要补挂）；
+ * 已有人工/AI/忽略记录的 (PR, 任务) 对不再重复出现。
+ */
+export function associationCandidates(projectId = 1): AssociationCandidate[] {
+  const index = buildUserIndex(projectId);
+  const board = buildBoard(projectId);
+  const tasks = board.groups.flatMap((group) => group.tasks.map((task) => ({ ...task, group: group.name })));
+  const meta = new Map(
+    queryAll<{ number: number; filesJson: string; authorsJson: string; state: string; mergedAt: string | null; title: string }>(
+      `SELECT number, files_json AS filesJson, authors_json AS authorsJson, state, merged_at AS mergedAt, title
+       FROM pull_requests WHERE project_id = ?`, [projectId]
+    ).map((row) => [Number(row.number), {
+      files: parseJson<string[]>(row.filesJson, []),
+      authors: parseJson<Array<{ name: string | null; email: string | null }>>(row.authorsJson, []),
+      state: row.state,
+      mergedAt: row.mergedAt,
+      title: row.title
+    }])
+  );
+  const decided = new Set(
+    queryAll<{ pullNumber: number; moduleId: number | null }>(
+      `SELECT pull_number AS pullNumber, module_id AS moduleId FROM pull_task_ai WHERE project_id = ?`, [projectId]
+    ).map((row) => `${row.pullNumber}:${row.moduleId ?? ""}`)
+  );
+  const pathByModule = new Map(tasks.map((task) => [task.moduleId, pathByModuleGet(projectId, task.moduleId)]));
+
+  const out: AssociationCandidate[] = [];
+  for (const task of tasks) {
+    if (task.state === "done" || task.state === "developing") continue;
+    if (!task.ownerUserId) continue;
+    const paths = pathByModule.get(task.moduleId) ?? [];
+    for (const [number, info] of meta) {
+      if (info.state !== "merged") continue;
+      if (decided.has(`${number}:${task.moduleId}`)) continue;
+      if (task.pulls.some((pull) => pull.number === number)) continue;
+      const authorUser = info.authors
+        .map((author) => index.resolveCommit(null, author.name, author.email))
+        .find((userId) => userId === task.ownerUserId);
+      if (!authorUser) continue;
+      const hitPattern = paths.some((pattern) => info.files.some((file) => file === pattern || file.endsWith(pattern.replace(/\*\*/g, ""))));
+      if (hitPattern) continue; // 能按路径挂上的不算漏挂
+      out.push({
+        moduleId: task.moduleId,
+        moduleKey: task.key,
+        taskName: task.name,
+        group: task.group,
+        ownerName: task.ownerName,
+        pullNumber: number,
+        pullTitle: info.title,
+        author: info.authors.map((a) => a.name ?? a.email ?? "?").join("、"),
+        mergedAt: info.mergedAt
+      });
+      if (out.length >= 100) return out;
+    }
+  }
+  return out;
+}
+
+function pathByModuleGet(projectId: number, moduleId: number): string[] {
+  return parseJson<string[]>(
+    queryOne<{ pathsJson: string }>(`SELECT paths_json AS pathsJson FROM modules WHERE id = ?`, [moduleId])?.pathsJson ?? "[]",
+    []
+  );
+}
+
+export function confirmAssociation(pullNumber: number, moduleId: number, projectId = 1) {
+  execute(
+    `INSERT INTO pull_task_ai (project_id, pull_number, module_id, source) VALUES (?, ?, ?, 'manual')
+     ON CONFLICT(project_id, pull_number, module_id) DO UPDATE SET source = 'manual'`,
+    [projectId, pullNumber, moduleId]
+  );
+  return { ok: true };
+}
+
+export function dismissAssociation(pullNumber: number, moduleId: number, projectId = 1) {
+  execute(
+    `INSERT INTO pull_task_ai (project_id, pull_number, module_id, source) VALUES (?, ?, ?, 'dismissed')
+     ON CONFLICT(project_id, pull_number, module_id) DO UPDATE SET source = 'dismissed'`,
+    [projectId, pullNumber, moduleId]
+  );
+  return { ok: true };
 }

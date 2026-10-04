@@ -14,8 +14,9 @@ import { applyRfcPatterns, listRfcContracts, planRfcPatterns, rfcCoverage, syncR
 import { NATURE_LABELS, classifyReasons, type ReasonNature } from "./reason.js";
 import { ingestGiteeWebhook } from "./ingest.js";
 import {
-  aiAssociatePulls, applyAssignment, backfillMergedFiles, backfillPullAuthors, buildBoard, buildPeople, buildPullDetails,
-  identitySuggestions, parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
+  aiAssociatePulls, applyAssignment, associationCandidates, backfillMergedFiles, backfillPullAuthors, buildBoard,
+  buildPeople, buildPullDetails, confirmAssociation, dismissAssociation, identitySuggestions,
+  parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
 import { backfillPullComments } from "./pulls.js";
 import { buildProgressWorkbook } from "./export.js";
@@ -912,6 +913,30 @@ router.get("/progress/pulls", requireAuth, (_req, res) => {
 
 router.get("/progress/timeline", requireAuth, (_req, res) => {
   res.json(buildTimeline());
+});
+
+router.get("/progress/association-candidates", requireAuth, requireAdmin, (_req, res) => {
+  res.json(associationCandidates());
+});
+
+router.post("/progress/confirm-association", requireAuth, requireAdmin, (req, res) => {
+  const body = (req.body ?? {}) as { pullNumber?: number; moduleId?: number };
+  if (!Number(body.pullNumber) || !Number(body.moduleId)) {
+    res.status(400).json({ error: "pullNumber 和 moduleId 必填" });
+    return;
+  }
+  res.json(confirmAssociation(Number(body.pullNumber), Number(body.moduleId)));
+  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "association_confirm", "module", Number(body.moduleId), { pullNumber: Number(body.pullNumber) });
+});
+
+router.post("/progress/dismiss-association", requireAuth, requireAdmin, (req, res) => {
+  const body = (req.body ?? {}) as { pullNumber?: number; moduleId?: number };
+  if (!Number(body.pullNumber) || !Number(body.moduleId)) {
+    res.status(400).json({ error: "pullNumber 和 moduleId 必填" });
+    return;
+  }
+  res.json(dismissAssociation(Number(body.pullNumber), Number(body.moduleId)));
+  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "association_dismiss", "module", Number(body.moduleId), { pullNumber: Number(body.pullNumber) });
 });
 
 router.post("/progress/backfill-comments", requireAuth, requireAdmin, async (req, res) => {

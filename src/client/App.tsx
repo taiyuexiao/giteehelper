@@ -103,7 +103,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/repo" element={<Suspense fallback={<Loading />}><RepoGraphPage user={user} /></Suspense>} />
-          <Route path="/progress" element={<ProgressPage />} />
+          <Route path="/progress" element={<ProgressPage user={user} />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/modules" element={<ModulesPage user={user} />} />
           <Route path="/rules" element={<Guard user={user} roles={["admin", "maintainer"]}><RulesPage /></Guard>} />

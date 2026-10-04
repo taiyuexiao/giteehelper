@@ -884,3 +884,18 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 .stream-detail.expanded { -webkit-line-clamp: unset; color: #445c68; background: #f6f9fa; border-radius: 8px; padding: 8px 10px; }
 .stream-sentinel { padding: 14px 0 4px 124px; color: #8fa2ab; font-size: 12px; }
 .stream-sentinel .loading { color: #2f7fa8; }
+
+/* ---------- 全景 v3：双模式 / 三面微状态 / 待确认关联 ---------- */
+.progress-summary .view-switcher { margin: 0; }
+.filter-bar .view-switcher { display: inline-flex; }
+.progress-group-header h3 { display: flex; align-items: center; gap: 8px; }
+.progress-group-header .member-avatar { width: 24px; height: 24px; font-size: 11px; }
+.member-rate { padding: 0 16px 6px; display: flex; flex-direction: column; gap: 4px; }
+.member-rate small { color: #6b7f88; font-size: 11px; }
+.task-subdots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: 1px; }
+.task-subdots i { width: 8px; height: 8px; border-radius: 50%; background: #dfe7ea; }
+.task-subdots i.on { background: #2e9e5b; }
+.fe-pending { font-style: normal; font-size: 10px; color: #8a6d1f; background: #f6ecd2; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+.candidate-panel { margin-bottom: 16px; border-left: 3px solid #db8a2b; }
+.candidate-panel td small { display: block; color: #8fa2ab; }
+.candidate-panel .row-actions { display: flex; gap: 6px; }

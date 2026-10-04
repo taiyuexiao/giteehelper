@@ -19,9 +19,11 @@ type BoardTaskPull = { number: number; title: string; state: string; kind: strin
 type BoardTask = {
   moduleId: number; key: string; name: string; ownerUserId: number | null; ownerName: string | null;
   state: TaskState; docMerged: number; docOpen: number; codeMerged: number; codeOpen: number;
-  lastActivityAt: string | null; authorLogins: string[]; pulls: BoardTaskPull[];
+  lastActivityAt: string | null; authorLogins: string[];
+  sub: { backend: boolean; frontend: boolean; docs: boolean }; frontendPending: boolean;
+  pulls: BoardTaskPull[];
 };
-type BoardGroup = { name: string; moduleId: number | null; ownerUserId: number | null; ownerName: string | null; tasks: BoardTask[] };
+type BoardGroup = { name: string; moduleId: number | null; ownerUserId: number | null; ownerName: string | null; ownerNames: string[]; tasks: BoardTask[] };
 type BoardData = {
   initialized: boolean;
   summary: Record<TaskState, number> & { total: number };
@@ -35,6 +37,7 @@ type PersonMetrics = {
   commitCount: number; heat: number[][]; referencedBy: number; referencesOut: number; emails: string[];
 };
 
+type AssociationCandidate = { moduleId: number; moduleKey: string; taskName: string; group: string | null; ownerName: string | null; pullNumber: number; pullTitle: string; author: string; mergedAt: string | null };
 type IdentitySuggestion = { login: string; prs: number; resolvedTo: number | null; resolvedName: string | null; sampleNames: string[] };
 
 type PullDetail = {
@@ -270,7 +273,10 @@ function IdentityOptions() {
 
 /* ---------- 任务全景 ---------- */
 
-function Board({ data }: { data: BoardData }) {
+function Board({ data, user, candidates, onRefresh }: {
+  data: BoardData; user: { role: string }; candidates: AssociationCandidate[]; onRefresh: () => void;
+}) {
+  const [mode, setMode] = useState<"domain" | "person">("domain");
   const [ownerFilter, setOwnerFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -284,15 +290,38 @@ function Board({ data }: { data: BoardData }) {
     return [...map.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
   }, [data]);
 
-  const matches = (task: BoardTask) => {
-    if (ownerFilter && String(task.ownerUserId ?? "") !== ownerFilter) return false;
+  const matches = (task: BoardTask, ignoreOwner = false) => {
+    if (!ignoreOwner && ownerFilter && String(task.ownerUserId ?? "") !== ownerFilter) return false;
     if (stateFilter && task.state !== stateFilter) return false;
     if (keyword && !`${task.name} ${task.key} ${task.ownerName ?? ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
     return true;
   };
 
+  const allTasks = data.groups.flatMap((group) => group.tasks.map((task) => ({ ...task, group: group.name })));
+
+  // 按人模式：每人一列，列内是他名下的任务
+  const personGroups = useMemo(() => {
+    const map = new Map<string, Array<BoardTask & { group: string }>>();
+    for (const task of allTasks) {
+      if (!matches(task, true)) continue;
+      const key = task.ownerName ?? "未分配";
+      const list = map.get(key) ?? [];
+      list.push(task);
+      map.set(key, list);
+    }
+    return [...map.entries()].sort((a, b) => {
+      const doneA = a[1].filter((t) => t.state === "done").length;
+      const doneB = b[1].filter((t) => t.state === "done").length;
+      return doneB - doneA || b[1].length - a[1].length;
+    });
+  }, [allTasks, stateFilter, keyword]);
+
   return (
     <>
+      {user.role === "admin" && candidates.length > 0 && (
+        <CandidatePanel candidates={candidates} onAction={onRefresh} />
+      )}
+
       <section className="metric-grid progress-summary">
         <article className="metric"><span>任务总数</span><strong>{data.summary.total}</strong><ClipboardList size={19} /></article>
         {STATE_ORDER.map((state) => (
@@ -305,10 +334,16 @@ function Board({ data }: { data: BoardData }) {
       </section>
 
       <section className="filter-bar panel">
-        <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} aria-label="按负责人过滤">
-          <option value="">全部成员</option>
-          {owners.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
-        </select>
+        <div className="view-switcher" role="tablist" aria-label="分组方式">
+          <button className={mode === "domain" ? "active" : ""} onClick={() => setMode("domain")}>按域</button>
+          <button className={mode === "person" ? "active" : ""} onClick={() => setMode("person")}>按人</button>
+        </div>
+        {mode === "domain" && (
+          <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} aria-label="按负责人过滤">
+            <option value="">全部成员</option>
+            {owners.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
+          </select>
+        )}
         <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} aria-label="按状态过滤">
           <option value="">全部状态</option>
           {STATE_ORDER.map((state) => <option key={state} value={state}>{STATE_LABELS[state]}</option>)}
@@ -316,37 +351,139 @@ function Board({ data }: { data: BoardData }) {
         <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索任务 / 编号 / 成员" />
       </section>
 
-      <section className="progress-board">
-        {data.groups.map((group) => {
-          const visible = group.tasks.filter(matches);
-          if (ownerFilter || stateFilter || keyword ? visible.length === 0 : false) return null;
-          return (
-            <article key={group.name} className="panel progress-group">
-              <header className="progress-group-header">
-                <h3>{group.name}</h3>
-                <span>{group.ownerName ? `负责人 ${group.ownerName}` : "未分配负责人"} · {group.tasks.length} 任务</span>
-              </header>
-              <div className="progress-tasks">
-                {visible.map((task) => (
-                  <button key={task.moduleId} className={`progress-task progress-${task.state}`} onClick={() => setSelected(task)} title={`${task.name}（${STATE_LABELS[task.state]}）`}>
-                    <strong>{task.name}</strong>
-                    <small>
-                      {task.ownerName ?? "待认领"}
-                      {task.codeMerged > 0 && ` · ${task.codeMerged} 合并`}
-                      {task.codeOpen > 0 && ` · ${task.codeOpen} 在飞`}
-                      {task.state !== "done" && task.docMerged > 0 && " · RFC 已合"}
-                    </small>
-                  </button>
-                ))}
-                {visible.length === 0 && <p className="detail-note">无匹配任务</p>}
-              </div>
-            </article>
-          );
-        })}
-      </section>
+      {mode === "domain" && (
+        <section className="progress-board">
+          {data.groups.map((group) => {
+            const visible = group.tasks.filter((task) => matches(task));
+            if ((ownerFilter || stateFilter || keyword) && visible.length === 0) return null;
+            return (
+              <article key={group.name} className="panel progress-group">
+                <header className="progress-group-header">
+                  <h3>{group.name}</h3>
+                  <span>
+                    {group.ownerNames.length > 0
+                      ? `负责人 ${group.ownerNames.join(" · ")}`
+                      : group.ownerName ? `负责人 ${group.ownerName}` : "未分配负责人"}
+                    {" · "}{group.tasks.length} 任务
+                  </span>
+                </header>
+                <div className="progress-tasks">
+                  {visible.map((task) => (
+                    <TaskCard key={task.moduleId} task={task} onClick={() => setSelected(task)} />
+                  ))}
+                  {visible.length === 0 && <p className="detail-note">无匹配任务</p>}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
+
+      {mode === "person" && (
+        <section className="progress-board">
+          {personGroups.map(([owner, tasks]) => {
+            const done = tasks.filter((task) => task.state === "done").length;
+            const rate = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+            return (
+              <article key={owner} className="panel progress-group">
+                <header className="progress-group-header">
+                  <h3><span className="member-avatar">{owner.slice(0, 1)}</span>{owner}</h3>
+                  <span>{tasks.length} 任务</span>
+                </header>
+                <div className="member-rate">
+                  <div className="task-progress-track"><i style={{ width: `${rate}%` }} /></div>
+                  <small>完成 {done} · {rate}%</small>
+                </div>
+                <div className="progress-tasks">
+                  {tasks.map((task) => (
+                    <TaskCard key={task.moduleId} task={task} onClick={() => setSelected(task)} groupLabel={task.group} />
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+          {personGroups.length === 0 && <p className="detail-note">没有匹配的成员。</p>}
+        </section>
+      )}
 
       {selected && <TaskDrawer task={selected} onClose={() => setSelected(null)} />}
     </>
+  );
+}
+
+function TaskCard({ task, onClick, groupLabel }: { task: BoardTask; onClick: () => void; groupLabel?: string }) {
+  const hasMergedCode = task.codeMerged > 0;
+  return (
+    <button className={`progress-task progress-${task.state}`} onClick={onClick} title={`${task.name}（${STATE_LABELS[task.state]}）`}>
+      <strong>
+        {task.name}
+        {task.frontendPending && task.state === "done" && <em className="fe-pending">前端未动</em>}
+      </strong>
+      <small>
+        {task.ownerName ?? "待认领"}
+        {task.codeMerged > 0 && ` · ${task.codeMerged} 合并`}
+        {task.codeOpen > 0 && ` · ${task.codeOpen} 在飞`}
+        {task.state !== "done" && task.docMerged > 0 && " · RFC 已合"}
+        {groupLabel ? ` · ${groupLabel}` : ""}
+        {hasMergedCode && (
+          <span className="task-subdots">
+            <i className={task.sub.backend ? "on" : "off"} title={`后端${task.sub.backend ? "已交付" : "未见交付"}`} />
+            <i className={task.sub.frontend ? "on" : "off"} title={`前端${task.sub.frontend ? "已交付" : "未见交付"}`} />
+            <i className={task.sub.docs ? "on" : "off"} title={`文档${task.sub.docs ? "已交付" : "未见交付"}`} />
+          </span>
+        )}
+      </small>
+    </button>
+  );
+}
+
+function CandidatePanel({ candidates, onAction }: { candidates: AssociationCandidate[]; onAction: () => void }) {
+  const [open, setOpen] = useState(true);
+  const [busy, setBusy] = useState(false);
+  async function act(kind: "confirm" | "dismiss", pullNumber: number, moduleId: number) {
+    setBusy(true);
+    try {
+      await api(`/progress/${kind === "confirm" ? "confirm-association" : "dismiss-association"}`, {
+        method: "POST",
+        body: JSON.stringify({ pullNumber, moduleId })
+      });
+      onAction();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="panel candidate-panel">
+      <div className="panel-header">
+        <div><h2>待确认关联（{candidates.length}）</h2><p>负责人本人提交过、但没能自动挂到任务上的已合并 PR。确认后计入任务进度。</p></div>
+        <button className="secondary-button" onClick={() => setOpen(!open)}>{open ? "收起" : "展开"}</button>
+      </div>
+      {open && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>任务</th><th>负责人</th><th>PR</th><th>提交作者</th><th>合并时间</th><th>操作</th></tr></thead>
+            <tbody>
+              {candidates.slice(0, 30).map((item) => (
+                <tr key={`${item.pullNumber}-${item.moduleId}`}>
+                  <td><strong>{item.taskName}</strong><small>{item.moduleKey}</small></td>
+                  <td>{item.ownerName ?? "—"}</td>
+                  <td>!{item.pullNumber}<small>{item.pullTitle.slice(0, 34)}</small></td>
+                  <td>{item.author}</td>
+                  <td><small>{item.mergedAt?.slice(0, 10) ?? "—"}</small></td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="small-button" disabled={busy} onClick={() => void act("confirm", item.pullNumber, item.moduleId)}>确认挂接</button>
+                      <button className="small-button" disabled={busy} onClick={() => void act("dismiss", item.pullNumber, item.moduleId)}>忽略</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {candidates.length > 30 && <p className="detail-note" style={{ padding: "6px 0" }}>仅显示前 30 条。</p>}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -712,25 +849,30 @@ function PullRecordModal({ details, onClose }: { details: PullDetail[]; onClose:
 
 /* ---------- 页面 ---------- */
 
-export default function ProgressPage() {
+export default function ProgressPage({ user }: { user: { role: string } }) {
   const [tab, setTab] = useState<"board" | "people" | "timeline">("board");
   const [board, setBoard] = useState<BoardData | null>(null);
   const [people, setPeople] = useState<PersonMetrics[] | null>(null);
   const [details, setDetails] = useState<PullDetail[] | null>(null);
+  const [candidates, setCandidates] = useState<AssociationCandidate[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     setBusy(true);
     try {
-      const [boardData, peopleData, detailData] = await Promise.all([
+      const [boardData, peopleData, detailData, candidateData] = await Promise.all([
         api<BoardData>("/progress/board"),
         api<PersonMetrics[]>("/progress/people"),
-        api<PullDetail[]>("/progress/pulls")
+        api<PullDetail[]>("/progress/pulls"),
+        user.role === "admin"
+          ? api<AssociationCandidate[]>("/progress/association-candidates").catch(() => [] as AssociationCandidate[])
+          : Promise.resolve([] as AssociationCandidate[])
       ]);
       setBoard(boardData);
       setPeople(peopleData);
       setDetails(detailData);
+      setCandidates(candidateData);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -767,7 +909,7 @@ export default function ProgressPage() {
             <button className={tab === "people" ? "active" : ""} onClick={() => setTab("people")}>个人成长轨迹</button>
             <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")}>时间线</button>
           </div>
-          {tab === "board" && <Board data={board} />}
+          {tab === "board" && <Board data={board} user={user} candidates={candidates} onRefresh={() => void load()} />}
           {tab === "people" && <People people={people} details={details} />}
           {tab === "timeline" && <TimelineTab />}
         </>
