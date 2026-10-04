@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, GitCommitHorizontal, Maximize2, MessageSquare, Minus, Plus, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ExternalLink, Search } from "lucide-react";
 import { api } from "../api";
 
 /**
- * 时间线：单轨可拖动时间轴。
+ * 时间线：纵向时间流，精确到秒。
  *
- * 设计取向（这条是用户点名要求的部分）：
- * - 不做每人一条泳道（太乱）：一条主轨 + 顶部按人筛选；
- * - 缩小时相近事件叠成小堆（≤4 个点 + 「+N」角标），点堆放大看细节；
- * - 拖动 = 平移（transform 移动容器，不逐帧重排 DOM），滚轮 = 以光标为中心缩放；
- * - 底部密度导航条：全量范围每日一条，视口框可拖，大范围移动不用一直拖主轨；
- * - 悬停出卡片、点击开右侧抽屉，全链路不离开页面。
+ * - 整体视图：全员事件按时间倒序成一条流，按天分组（日期头吸顶）；
+ * - 点击成员 chip = 个人时间线：只有他自己的行为；
+ * - 类型徽章 + 左侧轨道圆点标色；事件正文两行截断，点击展开；Gitee 直链；
+ * - 滚动分页加载（每次 200 条），日期范围 + 关键词过滤。
  */
 
 type EventType = "push" | "pr_open" | "pr_merged" | "pr_closed" | "comment";
@@ -28,64 +26,51 @@ type TimelineEvent = {
   sha: string | null;
 };
 
-const TYPE_META: Record<EventType, { label: string; color: string; fill: string }> = {
-  push: { label: "提交", color: "#5f7fb8", fill: "rgba(95,127,184,0.16)" },
-  pr_open: { label: "PR 开启", color: "#39809c", fill: "rgba(57,128,156,0.16)" },
-  pr_merged: { label: "PR 合并", color: "#2e9e5b", fill: "rgba(46,158,91,0.18)" },
-  pr_closed: { label: "PR 关闭", color: "#98a7ad", fill: "rgba(152,167,173,0.18)" },
-  comment: { label: "评论", color: "#db8a2b", fill: "rgba(219,138,43,0.16)" }
+const TYPE_META: Record<EventType, { label: string; color: string; tint: string }> = {
+  push: { label: "提交", color: "#5f7fb8", tint: "rgba(95,127,184,0.14)" },
+  pr_open: { label: "PR 开启", color: "#39809c", tint: "rgba(57,128,156,0.14)" },
+  pr_merged: { label: "PR 合并", color: "#2e9e5b", tint: "rgba(46,158,91,0.16)" },
+  pr_closed: { label: "PR 关闭", color: "#98a7ad", tint: "rgba(152,167,173,0.16)" },
+  comment: { label: "评论", color: "#db8a2b", tint: "rgba(219,138,43,0.14)" }
 };
 const ALL_TYPES = Object.keys(TYPE_META) as EventType[];
+const PAGE = 200;
 
-const DAY = 86_400_000;
-const TRACK_H = 260;
-const TRACK_Y = 150;
-
-function fmtTime(ts: number) {
+const pad = (n: number) => String(n).padStart(2, "0");
+function hms(ts: number) {
   const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
-function fmtDay(ts: number) {
+function dayKey(ts: number) {
   const d = new Date(ts);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
-type Cluster = { ts: number; x: number; events: TimelineEvent[] };
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+function dayLabel(key: string) {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = dayKey(Date.now());
+  const yesterday = dayKey(Date.now() - 86_400_000);
+  const suffix = `（周${WEEKDAYS[date.getDay()]}）`;
+  if (key === today) return `今天 · ${m} 月 ${d} 日 ${suffix}`;
+  if (key === yesterday) return `昨天 · ${m} 月 ${d} 日 ${suffix}`;
+  return `${y} 年 ${m} 月 ${d} 日 ${suffix}`;
+}
 
 export default function TimelineTab() {
   const [events, setEvents] = useState<TimelineEvent[] | null>(null);
   const [error, setError] = useState("");
   const [person, setPerson] = useState<string | null>(null);
   const [types, setTypes] = useState<Set<EventType>>(() => new Set(ALL_TYPES));
-  const [pxPerDay, setPxPerDay] = useState(0);
-  const [startTs, setStartTs] = useState(() => Date.now() - 14 * DAY);
-  const [hovered, setHovered] = useState<{ cluster: Cluster; x: number } | null>(null);
-  const [selected, setSelected] = useState<TimelineEvent | null>(null);
-
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(900);
-  const dragRef = useRef<{ startX: number; startStartTs: number; moved: boolean } | null>(null);
-  const panStyleRef = useRef<HTMLDivElement>(null);
+  const [keyword, setKeyword] = useState("");
+  const [fromDay, setFromDay] = useState("");
+  const [toDay, setToDay] = useState("");
+  const [limit, setLimit] = useState(PAGE);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api<TimelineEvent[]>("/progress/timeline").then(setEvents).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
-
-  useLayoutEffect(() => {
-    const element = trackRef.current;
-    if (!element) return;
-    const measure = () => setWidth(element.clientWidth || 900);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  // 默认视野：近 14 天
-  useEffect(() => {
-    if (width && pxPerDay === 0) setPxPerDay(width / 14);
-  }, [width, pxPerDay]);
 
   const people = useMemo(() => {
     const map = new Map<string, number>();
@@ -94,11 +79,45 @@ export default function TimelineTab() {
   }, [events]);
 
   const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    const fromTs = fromDay ? Date.parse(`${fromDay}T00:00:00`) : null;
+    const toTs = toDay ? Date.parse(`${toDay}T23:59:59`) : null;
     return (events ?? []).filter((event) => {
       if (person && event.actor !== person) return false;
-      return types.has(event.type);
+      if (!types.has(event.type)) return false;
+      if (fromTs !== null && event.ts < fromTs) return false;
+      if (toTs !== null && event.ts > toTs) return false;
+      if (kw && !`${event.title} ${event.detail ?? ""} ${event.actor}`.toLowerCase().includes(kw)) return false;
+      return true;
     });
-  }, [events, person, types]);
+  }, [events, person, types, keyword, fromDay, toDay]);
+
+  // 按天分组（流内已经倒序）
+  const groups = useMemo(() => {
+    const map = new Map<string, TimelineEvent[]>();
+    for (const event of filtered.slice(0, limit)) {
+      const key = dayKey(event.ts);
+      const list = map.get(key) ?? [];
+      list.push(event);
+      map.set(key, list);
+    }
+    return [...map.entries()];
+  }, [filtered, limit]);
+
+  // 滚动到底自动加载更早的事件
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && limit < filtered.length) {
+        setLimit((current) => current + PAGE);
+      }
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [limit, filtered.length]);
+
+  useEffect(() => { setLimit(PAGE); }, [person, keyword, fromDay, toDay, types]);
 
   const stats = useMemo(() => {
     const counts: Record<EventType, number> = { push: 0, pr_open: 0, pr_merged: 0, pr_closed: 0, comment: 0 };
@@ -106,148 +125,27 @@ export default function TimelineTab() {
     return counts;
   }, [filtered]);
 
-  const xOf = useCallback((ts: number) => ((ts - startTs) / DAY) * pxPerDay, [startTs, pxPerDay]);
-
-  // 事件分簇：15px 内的事件叠成一列
-  const clusters = useMemo(() => {
-    const visible = filtered
-      .map((event) => ({ event, x: xOf(event.ts) }))
-      .filter((item) => item.x > -200 && item.x < width + 200)
-      .sort((a, b) => a.x - b.x);
-    const out: Cluster[] = [];
-    for (const item of visible) {
-      const last = out[out.length - 1];
-      if (last && item.x - last.x < 15) {
-        last.events.push(item.event);
-        last.ts = Math.max(last.ts, item.event.ts);
-      } else {
-        out.push({ ts: item.event.ts, x: item.x, events: [item.event] });
-      }
-    }
-    return out;
-  }, [filtered, xOf, width]);
-
-  // 日期刻度：标签间距 ≥ 64px
-  const dayTicks = useMemo(() => {
-    if (!pxPerDay) return []; // pxPerDay 尚未初始化时 xOf 恒为 0，循环条件永远为真——首帧死循环的教训
-    const step = Math.max(1, Math.ceil(64 / pxPerDay));
-    const ticks: Array<{ x: number; label: string; weekend: boolean; today: boolean }> = [];
-    const firstDay = Math.floor(startTs / DAY) * DAY;
-    const now = Date.now();
-    let guard = 0;
-    for (let day = firstDay; xOf(day) < width + 80 && guard < 500; day += DAY, guard += 1) {
-      const x = xOf(day);
-      if (x < -80) continue;
-      const date = new Date(day + 8 * 3_600_000); // 东八区的“零点”刻度
-      const dayIndex = Math.round(day / DAY) % 7;
-      const weekend = dayIndex === 4 || dayIndex === 5; // UTC 偏移下近似，仅视觉轻重
-      const isToday = Math.abs(day + 8 * 3_600_000 - (Math.floor((now + 8 * 3_600_000) / DAY) * DAY)) < 1000;
-      const offset = Math.round((day - firstDay) / DAY);
-      if (offset % step === 0) {
-        ticks.push({ x, label: fmtDay(day + 8 * 3_600_000), weekend, today: isToday });
-      } else if (step === 1 || x % 1 === 0) {
-        ticks.push({ x, label: "", weekend, today: isToday });
-      }
-    }
-    return ticks;
-  }, [startTs, pxPerDay, xOf, width]);
-
-  // ---- 拖动平移 ----
-  const onPointerDown = (event: React.PointerEvent) => {
-    dragRef.current = { startX: event.clientX, startStartTs: startTs, moved: false };
-    (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
-  };
-  const onPointerMove = (event: React.PointerEvent) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const dx = event.clientX - drag.startX;
-    if (Math.abs(dx) > 4) drag.moved = true;
-    if (panStyleRef.current) panStyleRef.current.style.transform = `translateX(${dx}px)`;
-  };
-  const onPointerUp = (event: React.PointerEvent) => {
-    const drag = dragRef.current;
-    dragRef.current = null;
-    if (panStyleRef.current) panStyleRef.current.style.transform = "";
-    if (!drag) return;
-    const dx = event.clientX - drag.startX;
-    if (drag.moved) {
-      const oldest = events && events.length ? events[events.length - 1].ts : Date.now() - 365 * DAY;
-      setStartTs((current) => Math.min(Math.max(current - (dx / pxPerDay) * DAY, oldest - 400 * DAY), Date.now() + 30 * DAY));
-    }
-  };
-
-  // 滚轮以光标为中心缩放
-  const onWheel = (event: React.WheelEvent) => {
-    if (!trackRef.current) return;
-    const rect = trackRef.current.getBoundingClientRect();
-    const cursorX = event.clientX - rect.left;
-    const cursorTs = startTs + (cursorX / pxPerDay) * DAY;
-    const factor = event.deltaY > 0 ? 1 / 1.18 : 1.18;
-    const next = Math.min(Math.max(pxPerDay * factor, width / 365), width / 1.2);
-    setPxPerDay(next);
-    setStartTs(cursorTs - (cursorX / next) * DAY);
-  };
-
-  const zoomBy = (factor: number) => {
-    const centerTs = startTs + (width / 2 / pxPerDay) * DAY;
-    const next = Math.min(Math.max(pxPerDay * factor, width / 365), width / 1.2);
-    setPxPerDay(next);
-    setStartTs(centerTs - (width / 2 / next) * DAY);
-  };
-  const fitAll = () => {
-    if (!events || !events.length) return;
-    const min = events[events.length - 1].ts;
-    const max = events[0].ts;
-    const span = Math.max(max - min, DAY);
-    setPxPerDay(width / (span / DAY) * 0.92);
-    setStartTs(min - span * 0.04);
-  };
-  const jumpToday = () => setStartTs(Date.now() - (width / pxPerDay / 2) * DAY);
-
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const event of events ?? []) {
-      const day = Math.floor(event.ts / DAY);
-      map.set(String(day), (map.get(String(day)) ?? 0) + 1);
-    }
-    return map;
-  }, [events]);
-
-  const fullRange = useMemo(() => {
-    if (!events || !events.length) return null;
-    return { min: events[events.length - 1].ts, max: events[0].ts };
-  }, [events]);
-
   if (!events && !error) return null;
+
+  const selected = person ? people.find(([name]) => name === person) : null;
 
   return (
     <>
       {error && <div className="alert">{error}</div>}
 
-      <section className="panel timeline-panel">
-        <div className="panel-header">
-          <div>
-            <h2>时间线</h2>
-            <p>拖动平移 · 滚轮缩放 · 点事件看详情。当前 {filtered.length} 条（{stats.push} 提交 · {stats.pr_merged} 合并 · {stats.comment} 评论）</p>
-          </div>
-          <div className="timeline-actions">
-            <button className="icon-button" title="缩小" onClick={() => zoomBy(1 / 1.4)}><Minus size={15} /></button>
-            <button className="icon-button" title="放大" onClick={() => zoomBy(1.4)}><Plus size={15} /></button>
-            <button className="secondary-button" onClick={fitAll}><Maximize2 size={14} />适配全部</button>
-            <button className="secondary-button" onClick={jumpToday}><Sparkles size={14} />今天</button>
-          </div>
+      <section className="panel stream-filters">
+        <div className="stream-people" role="group" aria-label="按人筛选">
+          <button className={person === null ? "chip active" : "chip"} onClick={() => setPerson(null)}>
+            全员<small>{events?.length ?? 0}</small>
+          </button>
+          {people.map(([name, count]) => (
+            <button key={name} className={person === name ? "chip active" : "chip"} onClick={() => setPerson(person === name ? null : name)}>
+              <span className="chip-avatar">{name.slice(0, 1)}</span>{name}<small>{count}</small>
+            </button>
+          ))}
         </div>
-
-        <div className="timeline-filters">
-          <div className="timeline-people" role="group" aria-label="按人筛选">
-            <button className={person === null ? "chip active" : "chip"} onClick={() => setPerson(null)}>全部</button>
-            {people.map(([name, count]) => (
-              <button key={name} className={person === name ? "chip active" : "chip"} onClick={() => setPerson(person === name ? null : name)}>
-                <span className="chip-avatar">{name.slice(0, 1)}</span>{name}<small>{count}</small>
-              </button>
-            ))}
-          </div>
-          <div className="timeline-legend" role="group" aria-label="事件类型">
+        <div className="stream-toolbar">
+          <div className="stream-legend" role="group" aria-label="事件类型">
             {ALL_TYPES.map((type) => {
               const meta = TYPE_META[type];
               const on = types.has(type);
@@ -268,166 +166,69 @@ export default function TimelineTab() {
               );
             })}
           </div>
+          <label className="stream-date"><span>从</span><input type="date" value={fromDay} onChange={(event) => setFromDay(event.target.value)} /></label>
+          <label className="stream-date"><span>至</span><input type="date" value={toDay} onChange={(event) => setToDay(event.target.value)} /></label>
+          <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索内容 / 成员" /></label>
         </div>
-
-        <div
-          ref={trackRef}
-          className="timeline-track"
-          style={{ height: TRACK_H }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-          onWheel={onWheel}
-        >
-          <div ref={panStyleRef} className="timeline-pan">
-            <div className="timeline-line" style={{ top: TRACK_Y }} />
-            {dayTicks.map((tick, index) => (
-              <div key={index} className={tick.today ? "timeline-tick today" : tick.weekend ? "timeline-tick weekend" : "timeline-tick"} style={{ left: tick.x, top: TRACK_Y }}>
-                {tick.label && <span>{tick.label}</span>}
-              </div>
-            ))}
-            {clusters.map((cluster) => {
-              const shown = cluster.events.slice(0, 4);
-              const extra = cluster.events.length - shown.length;
-              return (
-                <div key={`${cluster.ts}-${Math.round(cluster.x)}`} className="timeline-cluster">
-                  {shown.map((event, index) => {
-                    const meta = TYPE_META[event.type];
-                    return (
-                      <button
-                        key={index}
-                        className="timeline-dot"
-                        title={`${fmtTime(event.ts)} ${event.actor}`}
-                        style={{
-                          left: cluster.x,
-                          top: TRACK_Y - 9 - index * 17,
-                          background: meta.color,
-                          boxShadow: `0 0 0 2.5px ${meta.fill}`
-                        }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={() => { if (!dragRef.current?.moved) setSelected(event); }}
-                        onMouseEnter={() => setHovered({ cluster, x: cluster.x })}
-                        onMouseLeave={() => setHovered(null)}
-                      />
-                    );
-                  })}
-                  {extra > 0 && (
-                    <button
-                      className="timeline-dot more"
-                      style={{ left: cluster.x, top: TRACK_Y - 9 - shown.length * 17 }}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => {
-                        if (!dragRef.current?.moved) zoomBy(1.8);
-                      }}
-                      onMouseEnter={() => setHovered({ cluster, x: cluster.x })}
-                      onMouseLeave={() => setHovered(null)}
-                    >+{extra}</button>
-                  )}
-                </div>
-              );
-            })}
-            <div className="timeline-now" style={{ left: xOf(Date.now()), top: TRACK_Y }}><span>现在</span></div>
-          </div>
-
-          {hovered && (
-            <div
-              className="timeline-hover"
-              style={{
-                left: Math.min(Math.max(hovered.x, 150), width - 150),
-                top: Math.max(TRACK_Y - 20 - hovered.cluster.events.length * 17 - 90, 8)
-              }}
-            >
-              {hovered.cluster.events.slice(0, 3).map((event, index) => (
-                <div key={index} className="hover-row">
-                  <i style={{ background: TYPE_META[event.type].color }} />
-                  <span>{TYPE_META[event.type].label} · {event.actor} · {fmtTime(event.ts)}</span>
-                </div>
-              ))}
-              <strong>{hovered.cluster.events[0].title}</strong>
-              {hovered.cluster.events.length > 3 && <small>…共 {hovered.cluster.events.length} 条</small>}
-            </div>
-          )}
-        </div>
-
-        {fullRange && (
-          <div className="timeline-minimap">
-            <div className="minimap-bars">
-              {(() => {
-                const span = fullRange.max - fullRange.min + DAY;
-                const days = Math.min(Math.ceil(span / DAY), 400);
-                const maxCount = Math.max(1, ...counts.values());
-                return Array.from({ length: days }, (_, index) => {
-                  const day = String(Math.floor(fullRange.min / DAY) + index);
-                  const count = counts.get(day) ?? 0;
-                  return <i key={index} className={count ? "minimap-bar" : "minimap-bar empty"} style={{ height: `${Math.max((count / maxCount) * 22, 2)}px` }} />;
-                });
-              })()}
-            </div>
-            <div
-              className="minimap-view"
-              style={(() => {
-                const span = fullRange.max - fullRange.min + DAY;
-                const left = ((startTs - fullRange.min) / span) * 100;
-                const w = ((width / pxPerDay) * DAY / span) * 100;
-                return { left: `${Math.max(0, Math.min(left, 100))}%`, width: `${Math.max(2, Math.min(w, 100))}%` };
-              })()}
-              onPointerDown={(event) => {
-                event.stopPropagation();
-                const rect = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                const span = fullRange.max - fullRange.min + DAY;
-                const move = (e: PointerEvent) => {
-                  const ratio = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
-                  setStartTs(fullRange.min + ratio * span - ((width / pxPerDay) * DAY) / 2);
-                };
-                const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-                window.addEventListener("pointermove", move);
-                window.addEventListener("pointerup", up);
-              }}
-            />
-            <span className="minimap-label">{fmtDay(fullRange.min)} ~ {fmtDay(fullRange.max)}</span>
+        {person && selected && (
+          <div className="stream-person-summary">
+            <strong>{person}</strong> 的时间线：提交 {stats.push} · PR 开启 {stats.pr_open} · 合并 {stats.pr_merged} · 关闭 {stats.pr_closed} · 评论 {stats.comment}
+            <button className="small-button" onClick={() => setPerson(null)}>返回全员</button>
           </div>
         )}
       </section>
 
-      {selected && <TimelineDrawer event={selected} onClose={() => setSelected(null)} />}
+      {filtered.length === 0 ? (
+        <section className="panel"><div className="empty-state"><h2>没有匹配的事件</h2><p>调整成员、类型或日期范围后重试。</p></div></section>
+      ) : (
+        <section className="panel stream-panel">
+          <div className="stream">
+            {groups.map(([key, items]) => (
+              <div key={key} className="stream-day">
+                <div className="stream-day-head">
+                  <span className="stream-day-dot" />
+                  <strong>{dayLabel(key)}</strong>
+                  <small>{items.length} 条行为</small>
+                </div>
+                {items.map((event, index) => (
+                  <StreamItem key={`${event.type}-${event.ts}-${index}`} event={event} last={index === items.length - 1} />
+                ))}
+              </div>
+            ))}
+            <div ref={sentinelRef} className="stream-sentinel">
+              {limit < filtered.length ? <span className="loading">加载更早的事件…</span> : <span>已经到最早了 · 共 {filtered.length} 条</span>}
+            </div>
+          </div>
+        </section>
+      )}
     </>
   );
 }
 
-function TimelineDrawer({ event, onClose }: { event: TimelineEvent; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+function StreamItem({ event, last }: { event: TimelineEvent; last: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const meta = TYPE_META[event.type];
   return (
-    <aside className="progress-drawer" role="dialog" aria-label="事件详情">
-      <header>
-        <div>
-          <h2>{event.title}</h2>
-          <p>
-            <span className="legend-chip on" style={{ "--chip-color": meta.color } as React.CSSProperties}><i />{meta.label}</span>
-          </p>
-        </div>
-        <button className="icon-button" onClick={onClose} aria-label="关闭">×</button>
-      </header>
-      <div className="progress-drawer-body">
-        <div className="detail-row"><span>时间</span><strong>{fmtTime(event.ts)}</strong></div>
-        <div className="detail-row"><span>成员</span><strong>{event.actor}</strong></div>
-        {event.sha && <div className="detail-row"><span>提交</span><strong>{event.sha}</strong></div>}
-        {event.number && <div className="detail-row"><span>PR</span><strong>!{event.number}</strong></div>}
-        {event.detail && <h3>内容</h3>}
-        {event.detail && <p className="detail-summary">{event.detail}</p>}
-        {event.url && (
-          <a className="primary-button drawer-link" href={event.url} target="_blank" rel="noreferrer">
-            在 Gitee 查看{event.type === "push" ? "提交" : event.type === "comment" ? "评论" : "PR"} <ExternalLink size={14} />
-          </a>
-        )}
-        {event.type === "push" && <p className="detail-note"><GitCommitHorizontal size={13} /> 提交事件按署名邮箱归属作者</p>}
-        {event.type === "comment" && <p className="detail-note"><MessageSquare size={13} /> 评审评论来自 Gitee 会话/行内评论</p>}
+    <article className={`stream-item${last ? " last" : ""}`}>
+      <div className="stream-when">
+        <time>{hms(event.ts)}</time>
+        <span className="stream-dot" style={{ background: meta.color, boxShadow: `0 0 0 3px ${meta.tint}` }} />
       </div>
-    </aside>
+      <div className="stream-body">
+        <div className="stream-head">
+          <span className="type-badge" style={{ background: meta.tint, color: meta.color }}>{meta.label}</span>
+          <strong className="stream-actor">{event.actor}</strong>
+          <span className="stream-title" onClick={() => setExpanded((current) => !current)}>{event.title}</span>
+          {event.url && (
+            <a className="stream-link" href={event.url} target="_blank" rel="noreferrer" title="在 Gitee 查看">
+              <ExternalLink size={13} />
+            </a>
+          )}
+        </div>
+        {event.detail && (
+          <p className={`stream-detail${expanded ? " expanded" : ""}`} onClick={() => setExpanded((current) => !current)}>{event.detail}</p>
+        )}
+      </div>
+    </article>
   );
 }
