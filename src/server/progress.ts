@@ -127,12 +127,12 @@ export function isMergeSync(title: string, authorCount: number): boolean {
  * manual=人工确认；调用方不传 evidence 时按强证据处理以兼容旧调用）；
  * path/rfc 共享模式与 ai 关联只是线索，进抽屉但不点亮任务；合并同步 PR 一律不驱动。
  */
-export function taskStateOf(pulls: Array<{ kind: PullKind; state: string; sync?: boolean; evidence?: EvidenceKind }>): TaskState {
-  const strong = (p: { evidence?: EvidenceKind }) =>
-    p.evidence === undefined || p.evidence === "ref" || p.evidence === "manual";
+export function taskStateOf(pulls: Array<{ kind: PullKind; state: string; sync?: boolean; strong?: boolean }>): TaskState {
+  // strong：PR 标题/分支写明任务编号、人工确认、或任务负责人本人是提交作者。
+  // 其余（路径/RFC 共享、AI 关联）只是线索，不驱动状态。
   const real = pulls.filter((p) => !p.sync);
-  if (real.some((p) => p.kind !== "doc" && strong(p) && p.state === "merged")) return "done";
-  if (real.some((p) => p.kind !== "doc" && strong(p) && p.state === "open")) return "developing";
+  if (real.some((p) => p.kind !== "doc" && p.strong && p.state === "merged")) return "done";
+  if (real.some((p) => p.kind !== "doc" && p.strong && p.state === "open")) return "developing";
   if (real.some((p) => p.kind === "doc" && p.state === "merged")) return "designed";
   if (real.some((p) => p.kind === "doc" && p.state === "open")) return "designing";
   return "not_started";
@@ -366,6 +366,17 @@ export function buildBoard(projectId = 1): BoardData {
     authorCount: parseJson<Array<unknown>>(row.authorsJson, []).length || undefined
   }));
 
+  const index = buildUserIndex(projectId);
+  const authorUsersByNumber = new Map<number, number[]>();
+  for (const pull of pulls) {
+    const authors = parseJson<Array<{ name: string | null; email: string | null }>>(
+      queryOne<{ authorsJson: string }>(`SELECT authors_json AS authorsJson FROM pull_requests WHERE project_id = ? AND number = ?`, [projectId, pull.number])?.authorsJson ?? "[]",
+      []
+    );
+    const ids = [...new Set(authors.map((a) => index.resolveCommit(null, a.name, a.email)).filter((id): id is number => Boolean(id)))];
+    authorUsersByNumber.set(pull.number, ids);
+  }
+
   const dismissedPairs = new Set(
     queryAll<{ pullNumber: number; moduleId: number }>(
       `SELECT pull_number AS pullNumber, module_id AS moduleId FROM pull_task_ai
@@ -427,7 +438,13 @@ export function buildBoard(projectId = 1): BoardData {
       name: task.name,
       ownerUserId: task.ownerUserId,
       ownerName: task.ownerUserId ? userNameById.get(task.ownerUserId) ?? null : null,
-      state: taskStateOf(associated.map((item) => ({ kind: item.kind, state: item.pull.state, sync: item.sync, evidence: item.evidence }))),
+      state: taskStateOf(associated.map((item) => ({
+        kind: item.kind,
+        state: item.pull.state,
+        sync: item.sync,
+        strong: item.evidence === "ref" || item.evidence === "manual"
+          || (task.ownerUserId !== null && (authorUsersByNumber.get(item.pull.number) ?? []).includes(task.ownerUserId))
+      }))),
       docMerged: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "merged").length,
       docOpen: associated.filter((item) => item.kind === "doc" && !item.sync && item.pull.state === "open").length,
       codeMerged: associated.filter((item) => item.kind !== "doc" && !item.sync && item.pull.state === "merged").length,

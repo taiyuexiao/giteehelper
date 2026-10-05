@@ -73,15 +73,20 @@ test("分支名里的任务编号与 RFC slug 也参与关联", () => {
   assert.deepEqual(associatePull(pull({ title: "chore: 杂项", headRef: "chore/misc" }), tasks, rfcIndex), []);
 });
 
-test("五态状态机：merged 才算完成，RFC merged 是设计定稿", () => {
+test("五态状态机：merged 才算完成，RFC merged 是设计定稿，弱证据不点亮", () => {
+  const s = { strong: true };
   assert.equal(taskStateOf([]), "not_started");
-  assert.equal(taskStateOf([{ kind: "doc", state: "open" }]), "designing");
-  assert.equal(taskStateOf([{ kind: "doc", state: "merged" }]), "designed");
-  assert.equal(taskStateOf([{ kind: "doc", state: "merged" }, { kind: "code", state: "open" }]), "developing");
-  assert.equal(taskStateOf([{ kind: "doc", state: "merged" }, { kind: "code", state: "merged" }]), "done");
-  assert.equal(taskStateOf([{ kind: "code", state: "merged" }]), "done");
+  assert.equal(taskStateOf([{ kind: "doc", state: "open", ...s }]), "designing");
+  assert.equal(taskStateOf([{ kind: "doc", state: "merged", ...s }]), "designed");
+  assert.equal(taskStateOf([{ kind: "doc", state: "merged", ...s }, { kind: "code", state: "open", ...s }]), "developing");
+  assert.equal(taskStateOf([{ kind: "doc", state: "merged", ...s }, { kind: "code", state: "merged", ...s }]), "done");
+  assert.equal(taskStateOf([{ kind: "code", state: "merged", ...s }]), "done");
   // closed 未合并不点亮任何状态
-  assert.equal(taskStateOf([{ kind: "code", state: "closed" }]), "not_started");
+  assert.equal(taskStateOf([{ kind: "code", state: "closed", ...s }]), "not_started");
+  // 弱证据（路径/RFC 共享/AI）不驱动 done/developing，但文档合并仍给设计定稿
+  assert.equal(taskStateOf([{ kind: "code", state: "merged" }]), "not_started");
+  assert.equal(taskStateOf([{ kind: "code", state: "open" }]), "not_started");
+  assert.equal(taskStateOf([{ kind: "doc", state: "merged" }, { kind: "code", state: "merged" }]), "designed");
 });
 
 test("全景分组优先取 group_name，回退 description 的能力域", () => {
