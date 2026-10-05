@@ -438,7 +438,7 @@ function TaskCard({ task, onClick, groupLabel }: { task: BoardTask; onClick: () 
 }
 
 function CandidatePanel({ candidates, onAction }: { candidates: AssociationCandidate[]; onAction: () => void }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false); // 默认收起，需要核对时再展开
   const [busy, setBusy] = useState(false);
   async function act(kind: "confirm" | "dismiss", pullNumber: number, moduleId: number) {
     setBusy(true);
