@@ -417,7 +417,7 @@ function TaskCard({ task, onClick, groupLabel }: { task: BoardTask; onClick: () 
     <button className={`progress-task progress-${task.state}`} onClick={onClick} title={`${task.name}（${STATE_LABELS[task.state]}）`}>
       <strong>
         {task.name}
-        {task.frontendPending && task.state === "done" && <em className="fe-pending">前端未动</em>}
+        {task.frontendPending && (task.state === "done" || task.state === "developing") && <em className="fe-pending">前端未动</em>}
       </strong>
       <small>
         {task.ownerName ?? "待认领"}
@@ -895,7 +895,7 @@ export default function ProgressPage({ user }: { user: { role: string } }) {
     <>
       <PageHeader
         title="进度"
-        description="merged 才算完成；在飞 PR 是进行中的弱信号。数据来自 Gitee PR 与分工表，点击任务查看证据链。"
+        description="深绿=代码已合并（完成）· 浅绿=开发中 · 条纹绿=设计定稿 · 淡蓝=设计中 · 灰=未开始；卡片右上三个圆点为 后端/前端/文档 交付情况（绿=已合入）。merged 才算完成，点击任务查看证据链。"
         actions={<button className="secondary-button" onClick={() => void load()} disabled={busy}><RefreshCw size={16} />{busy ? "刷新中…" : "刷新"}</button>}
       />
       {error && <div className="alert">{error}</div>}
