@@ -67,7 +67,7 @@ export interface Association {
 export type EvidenceKind = Association["evidence"] | "ai" | "manual";
 
 const WORK_REF_RE = /\b([A-Za-z]{2,10}-\d{1,6})\b/g;
-const DOCS_PATH_RE = /^docs\//i;
+const DOCS_PATH_RE = /^(docs|specs)\//i; // specs/ 是该仓库的需求/实现/进度文档目录
 const RFC_SLUG_RES = [
   /^docs\/rfcs\/(?:meta\/)?([A-Za-z0-9][A-Za-z0-9-]*)\.(?:mdx?|json)$/i,
   /^docs\/rfcs\/assets\/([A-Za-z0-9][A-Za-z0-9-]*)(?:\/|$)/i
