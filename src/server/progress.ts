@@ -14,7 +14,7 @@
  */
 import crypto from "node:crypto";
 import { config } from "./config.js";
-import { execute, parseJson, queryAll, queryOne } from "./db.js";
+import { audit, execute, parseJson, queryAll, queryOne } from "./db.js";
 import { isOperationalModule, wildcardMatch } from "./impact.js";
 import { fetchPullFiles } from "./pulls.js";
 import { fetchPullRequestCommits, pickHeadCommit, type PullCommit } from "./gitee.js";
@@ -242,6 +242,9 @@ export interface TaskSubStates {
   frontend: boolean;
   /** 已合并代码 PR 触碰过 docs/（混合型 PR 的文档部分） */
   docs: boolean;
+  /** 在飞（open）代码 PR 触碰过对应面：🟡 进行中 */
+  openBackend: boolean;
+  openFrontend: boolean;
 }
 
 export interface BoardTaskPull {
@@ -456,13 +459,18 @@ export function buildBoard(projectId = 1): BoardData {
         .at(-1) ?? null,
       authorLogins: [...new Set(associated.map((item) => item.pull.authorLogin).filter(Boolean) as string[])],
       sub: (() => {
-        const files = associated
+        const merged = associated
           .filter((item) => item.pull.state === "merged" && item.kind !== "doc")
           .flatMap((item) => item.pull.files);
+        const open = associated
+          .filter((item) => item.pull.state === "open" && item.kind !== "doc" && !item.sync)
+          .flatMap((item) => item.pull.files);
         return {
-          backend: files.some((f) => !/^frontend\//.test(f) && !/^docs\//.test(f)),
-          frontend: files.some((f) => /^frontend\//.test(f)),
-          docs: files.some((f) => /^docs\//.test(f))
+          backend: merged.some((f) => !/^frontend\//.test(f) && !/^docs\//.test(f)),
+          frontend: merged.some((f) => /^frontend\//.test(f)),
+          docs: merged.some((f) => /^docs\//.test(f)),
+          openBackend: open.some((f) => !/^frontend\//.test(f) && !/^docs\//.test(f)),
+          openFrontend: open.some((f) => /^frontend\//.test(f))
         };
       })(),
       frontendPending: task.paths.some((p) => p.startsWith("frontend/"))
@@ -1341,5 +1349,52 @@ export function dismissAssociation(pullNumber: number, moduleId: number, project
      ON CONFLICT(project_id, pull_number, module_id) DO UPDATE SET source = 'dismissed'`,
     [projectId, pullNumber, moduleId]
   );
+  return { ok: true };
+}
+
+/* ---------- 责任矩阵：人工阻塞标注 ---------- */
+
+export interface TaskBlocker {
+  moduleId: number;
+  blocked: boolean | null;
+  blockerNote: string;
+  actionNote: string;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+export function listBlockers(projectId = 1): TaskBlocker[] {
+  return queryAll<{ moduleId: number; blocked: number | null; blockerNote: string; actionNote: string; updatedBy: string | null; updatedAt: string }>(
+    `SELECT module_id AS moduleId, blocked, blocker_note AS blockerNote, action_note AS actionNote,
+            updated_by AS updatedBy, updated_at AS updatedAt
+     FROM task_blockers WHERE project_id = ?`, [projectId]
+  ).map((row) => ({
+    moduleId: row.moduleId,
+    blocked: row.blocked === null ? null : Boolean(row.blocked),
+    blockerNote: row.blockerNote,
+    actionNote: row.actionNote,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt
+  }));
+}
+
+export function upsertBlocker(
+  projectId: number,
+  moduleId: number,
+  blocked: boolean | null,
+  blockerNote: string,
+  actionNote: string,
+  updatedBy: string
+) {
+  execute(
+    `INSERT INTO task_blockers (project_id, module_id, blocked, blocker_note, action_note, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(project_id, module_id) DO UPDATE SET
+       blocked = excluded.blocked, blocker_note = excluded.blocker_note,
+       action_note = excluded.action_note, updated_by = excluded.updated_by,
+       updated_at = datetime('now')`,
+    [projectId, moduleId, blocked === null ? null : blocked ? 1 : 0, blockerNote.slice(0, 2000), actionNote.slice(0, 2000), updatedBy]
+  );
+  audit(null, updatedBy, "blocker_update", "module", moduleId, { blocked, blockerNote, actionNote });
   return { ok: true };
 }

@@ -281,6 +281,18 @@ CREATE TABLE IF NOT EXISTS module_group_aliases (
   UNIQUE(project_id, group_name)
 );
 
+-- 进度页责任矩阵：任务的人工阻塞标注（是否阻塞/阻塞点与阻塞方/介入建议）
+CREATE TABLE IF NOT EXISTS task_blockers (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  blocked INTEGER,
+  blocker_note TEXT NOT NULL DEFAULT '',
+  action_note TEXT NOT NULL DEFAULT '',
+  updated_by TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, module_id)
+);
+
 -- 进度页：AI 补充关联（规则证据 ref/rfc/path 覆盖不到的 PR，由大模型判断归属，
 -- 看板里标为「AI 识别」级证据，可审计）。module_id 为 NULL 表示“已判断、无把握”
 -- 进度页时间线：PR 评论/评审（回填自 Gitee 两个端点 + WebHook note 增量）

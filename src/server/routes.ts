@@ -19,6 +19,7 @@ import {
   parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
 import { backfillPullComments } from "./pulls.js";
+import { listBlockers, upsertBlocker } from "./progress.js";
 import { buildProgressWorkbook } from "./export.js";
 import { buildTimeline } from "./timeline.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -917,6 +918,21 @@ router.get("/progress/timeline", requireAuth, (_req, res) => {
 
 router.get("/progress/association-candidates", requireAuth, requireAdmin, (_req, res) => {
   res.json(associationCandidates());
+});
+
+router.get("/progress/blockers", requireAuth, (_req, res) => {
+  res.json(listBlockers());
+});
+
+router.post("/progress/blocker", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
+  const body = (req.body ?? {}) as { moduleId?: number; blocked?: boolean | null; blockerNote?: string; actionNote?: string };
+  if (!Number(body.moduleId)) {
+    res.status(400).json({ error: "moduleId 必填" });
+    return;
+  }
+  const blocked = body.blocked === null || body.blocked === undefined ? null : Boolean(body.blocked);
+  res.json(upsertBlocker(1, Number(body.moduleId), blocked, String(body.blockerNote ?? ""), String(body.actionNote ?? ""), actor(req)?.username ?? "system"));
+  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "blocker_update", "module", Number(body.moduleId), { blocked });
 });
 
 router.post("/progress/confirm-association", requireAuth, requireAdmin, (req, res) => {
