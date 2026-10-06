@@ -1415,6 +1415,9 @@ export interface MatrixRowPr {
   number: number;
   state: string;
   url: string | null;
+  /** PR 标题（chip 悬停提示用） */
+  title: string;
+  mergedAt: string | null;
   backend: boolean;
   frontend: boolean;
   /** 合并同步类集成 PR（不计完成） */
@@ -1433,6 +1436,8 @@ export interface MatrixRowItem {
   blockerOwner: string;
   blockerProgress: string;
   engageNote: string;
+  /** 「完成」列下的人工备注（全景模板给基线，此后人工维护） */
+  statusNote: string;
   updatedBy: string | null;
   updatedAt: string;
 }
@@ -1452,24 +1457,25 @@ export function listMatrixRows(projectId = 1): MatrixRowItem[] {
     return owner && name ? `https://gitee.com/${owner}/${name}/pulls/${number}` : null;
   };
   const pullMeta = new Map(
-    queryAll<{ number: number; state: string; filesJson: string; title: string; authorsJson: string }>(
-      `SELECT number, state, files_json AS filesJson, title, authors_json AS authorsJson FROM pull_requests WHERE project_id = ?`,
+    queryAll<{ number: number; state: string; filesJson: string; title: string; mergedAt: string | null; authorsJson: string }>(
+      `SELECT number, state, files_json AS filesJson, title, merged_at AS mergedAt, authors_json AS authorsJson FROM pull_requests WHERE project_id = ?`,
       [projectId]
     ).map((row) => [Number(row.number), {
       state: row.state,
       files: parseJson<string[]>(row.filesJson, []),
       title: row.title,
+      mergedAt: row.mergedAt,
       authors: parseJson<Array<{ name: string | null; email: string | null }>>(row.authorsJson, [])
     }])
   );
   return queryAll<{
     id: number; groupName: string; itemName: string; owner: string; prNumbers: string;
     blocked: number | null; blockerModule: string; blockerOwner: string; blockerProgress: string;
-    engageNote: string; updatedBy: string | null; updatedAt: string;
+    engageNote: string; statusNote: string; updatedBy: string | null; updatedAt: string;
   }>(
     `SELECT id, group_name AS groupName, item_name AS itemName, owner, pr_numbers AS prNumbers,
             blocked, blocker_module AS blockerModule, blocker_owner AS blockerOwner,
-            blocker_progress AS blockerProgress, engage_note AS engageNote,
+            blocker_progress AS blockerProgress, engage_note AS engageNote, status_note AS statusNote,
             updated_by AS updatedBy, updated_at AS updatedAt
      FROM matrix_rows WHERE project_id = ? ORDER BY sort_index, id`, [projectId]
   ).map((row) => {
@@ -1480,6 +1486,8 @@ export function listMatrixRows(projectId = 1): MatrixRowItem[] {
         number,
         state: meta?.state ?? "unknown",
         url: pullUrl(number),
+        title: meta?.title ?? "",
+        mergedAt: meta?.mergedAt ?? null,
         backend: files.some((f) => !/^frontend\//.test(f) && !/^(docs|specs)\//.test(f)),
         frontend: files.some((f) => /^frontend\//.test(f)),
         sync: isMergeSync(meta?.title ?? "", meta?.authors.length ?? 1)
@@ -1497,6 +1505,7 @@ export function listMatrixRows(projectId = 1): MatrixRowItem[] {
       blockerOwner: row.blockerOwner,
       blockerProgress: row.blockerProgress,
       engageNote: row.engageNote,
+      statusNote: row.statusNote,
       updatedBy: row.updatedBy,
       updatedAt: row.updatedAt
     };
@@ -1507,6 +1516,7 @@ export function upsertMatrixRow(projectId: number, input: {
   id?: number; groupName: string; itemName: string; owner: string;
   prNumbers: string; blocked: boolean | null;
   blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string;
+  statusNote: string;
 }, updatedBy: string): { id: number } {
   const clean = {
     group: String(input.groupName ?? "").trim() || "未分组",
@@ -1516,27 +1526,28 @@ export function upsertMatrixRow(projectId: number, input: {
     blockerModule: String(input.blockerModule ?? "").slice(0, 1000),
     blockerOwner: String(input.blockerOwner ?? "").slice(0, 300),
     blockerProgress: String(input.blockerProgress ?? "").slice(0, 1000),
-    engageNote: String(input.engageNote ?? "").slice(0, 1000)
+    engageNote: String(input.engageNote ?? "").slice(0, 1000),
+    statusNote: String(input.statusNote ?? "").slice(0, 300)
   };
   const blocked = input.blocked === null || input.blocked === undefined ? null : input.blocked ? 1 : 0;
   if (input.id) {
     execute(
       `UPDATE matrix_rows SET group_name = ?, item_name = ?, owner = ?, pr_numbers = ?, blocked = ?,
-              blocker_module = ?, blocker_owner = ?, blocker_progress = ?, engage_note = ?,
+              blocker_module = ?, blocker_owner = ?, blocker_progress = ?, engage_note = ?, status_note = ?,
               updated_by = ?, updated_at = datetime('now')
        WHERE id = ? AND project_id = ?`,
       [clean.group, clean.item, clean.owner, clean.prs, blocked, clean.blockerModule, clean.blockerOwner,
-       clean.blockerProgress, clean.engageNote, updatedBy, input.id, projectId]
+       clean.blockerProgress, clean.engageNote, clean.statusNote, updatedBy, input.id, projectId]
     );
     audit(null, updatedBy, "matrix_row_update", "matrix_row", input.id, { item: clean.item });
     return { id: input.id };
   }
   const maxSort = queryOne<{ m: number | null }>(`SELECT MAX(sort_index) AS m FROM matrix_rows WHERE project_id = ?`, [projectId])?.m ?? 0;
   const inserted = execute(
-    `INSERT INTO matrix_rows (project_id, group_name, item_name, owner, pr_numbers, blocked, blocker_module, blocker_owner, blocker_progress, engage_note, sort_index, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    `INSERT INTO matrix_rows (project_id, group_name, item_name, owner, pr_numbers, blocked, blocker_module, blocker_owner, blocker_progress, engage_note, status_note, sort_index, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     [projectId, clean.group, clean.item, clean.owner, clean.prs, blocked, clean.blockerModule,
-     clean.blockerOwner, clean.blockerProgress, clean.engageNote, (maxSort ?? 0) + 1, updatedBy]
+     clean.blockerOwner, clean.blockerProgress, clean.engageNote, clean.statusNote, (maxSort ?? 0) + 1, updatedBy]
   );
   const id = Number(inserted.lastInsertRowid);
   audit(null, updatedBy, "matrix_row_create", "matrix_row", id, { item: clean.item });

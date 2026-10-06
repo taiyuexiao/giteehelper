@@ -20,6 +20,7 @@ import {
 } from "./progress.js";
 import { backfillPullComments } from "./pulls.js";
 import { deleteMatrixRow, initMatrixRowsFromBoard, listBlockers, listMatrixRows, upsertBlocker, upsertMatrixRow } from "./progress.js";
+import { seedMatrixTemplate } from "./matrixTemplate.js";
 import { buildProgressWorkbook } from "./export.js";
 import { buildTimeline } from "./timeline.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -932,6 +933,16 @@ router.post("/progress/matrix-init", requireAuth, requireAdmin, (_req, res) => {
   res.json(initMatrixRowsFromBoard());
 });
 
+router.post("/progress/matrix-template", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const mode = String(body.mode ?? "");
+  if (mode !== "merge" && mode !== "replace") {
+    res.status(400).json({ error: "mode 必须是 merge 或 replace" });
+    return;
+  }
+  res.json(seedMatrixTemplate(mode, actor(req)?.username ?? "system"));
+});
+
 router.post("/progress/matrix-row", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   res.json(upsertMatrixRow(1, {
@@ -944,7 +955,8 @@ router.post("/progress/matrix-row", requireAuth, requireRole("admin", "maintaine
     blockerModule: String(body.blockerModule ?? ""),
     blockerOwner: String(body.blockerOwner ?? ""),
     blockerProgress: String(body.blockerProgress ?? ""),
-    engageNote: String(body.engageNote ?? "")
+    engageNote: String(body.engageNote ?? ""),
+    statusNote: String(body.statusNote ?? "")
   }, actor(req)?.username ?? "system"));
 });
 

@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS matrix_rows (
   blocker_owner TEXT NOT NULL DEFAULT '',
   blocker_progress TEXT NOT NULL DEFAULT '',
   engage_note TEXT NOT NULL DEFAULT '',
+  status_note TEXT NOT NULL DEFAULT '',
   sort_index INTEGER NOT NULL DEFAULT 0,
   updated_by TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -347,6 +348,8 @@ ensureColumn("task_blockers", "blocker_module", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("task_blockers", "blocker_owner", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("task_blockers", "blocker_progress", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("task_blockers", "engage_note", "TEXT NOT NULL DEFAULT ''");
+// 责任矩阵「完成」列的人工备注（全景模板带基线文字，旧库补列）
+ensureColumn("matrix_rows", "status_note", "TEXT NOT NULL DEFAULT ''");
 
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
 db.exec(`
