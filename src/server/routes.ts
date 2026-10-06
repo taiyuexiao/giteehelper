@@ -19,7 +19,7 @@ import {
   parseAssignmentCsv, parseAssignmentWithLlm, upsertIdentityAlias
 } from "./progress.js";
 import { backfillPullComments } from "./pulls.js";
-import { listBlockers, upsertBlocker } from "./progress.js";
+import { deleteMatrixRow, initMatrixRowsFromBoard, listBlockers, listMatrixRows, upsertBlocker, upsertMatrixRow } from "./progress.js";
 import { buildProgressWorkbook } from "./export.js";
 import { buildTimeline } from "./timeline.js";
 import { publicRuntimeSettings, updateRuntimeSettings } from "./settings.js";
@@ -922,6 +922,39 @@ router.get("/progress/association-candidates", requireAuth, requireAdmin, (_req,
 
 router.get("/progress/blockers", requireAuth, (_req, res) => {
   res.json(listBlockers());
+});
+
+router.get("/progress/matrix-rows", requireAuth, (_req, res) => {
+  res.json(listMatrixRows());
+});
+
+router.post("/progress/matrix-init", requireAuth, requireAdmin, (_req, res) => {
+  res.json(initMatrixRowsFromBoard());
+});
+
+router.post("/progress/matrix-row", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  res.json(upsertMatrixRow(1, {
+    id: Number(body.id) || undefined,
+    groupName: String(body.groupName ?? ""),
+    itemName: String(body.itemName ?? ""),
+    owner: String(body.owner ?? ""),
+    prNumbers: String(body.prNumbers ?? ""),
+    blocked: body.blocked === null || body.blocked === undefined ? null : Boolean(body.blocked),
+    blockerModule: String(body.blockerModule ?? ""),
+    blockerOwner: String(body.blockerOwner ?? ""),
+    blockerProgress: String(body.blockerProgress ?? ""),
+    engageNote: String(body.engageNote ?? "")
+  }, actor(req)?.username ?? "system"));
+});
+
+router.post("/progress/matrix-row/delete", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
+  const id = Number((req.body ?? {}).id);
+  if (!id) {
+    res.status(400).json({ error: "id 必填" });
+    return;
+  }
+  res.json(deleteMatrixRow(1, id, actor(req)?.username ?? "system"));
 });
 
 router.post("/progress/blocker", requireAuth, requireRole("admin", "maintainer"), (req, res) => {

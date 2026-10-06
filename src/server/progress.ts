@@ -1408,3 +1408,167 @@ export function upsertBlocker(
   audit(null, updatedBy, "blocker_update", "module", moduleId, { ...input });
   return { ok: true };
 }
+
+/* ---------- 责任矩阵 v2：交付项粒度的行（人工维护 + PR 号自动解析） ---------- */
+
+export interface MatrixRowPr {
+  number: number;
+  state: string;
+  url: string | null;
+  backend: boolean;
+  frontend: boolean;
+  /** 合并同步类集成 PR（不计完成） */
+  sync: boolean;
+}
+
+export interface MatrixRowItem {
+  id: number;
+  groupName: string;
+  itemName: string;
+  owner: string;
+  prNumbers: string;
+  prs: MatrixRowPr[];
+  blocked: boolean | null;
+  blockerModule: string;
+  blockerOwner: string;
+  blockerProgress: string;
+  engageNote: string;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+function parsePrNumbers(text: string): number[] {
+  const out = new Set<number>();
+  for (const match of (text ?? "").matchAll(/\d{1,5}/g)) {
+    const value = Number(match[0]);
+    if (value > 0) out.add(value);
+  }
+  return [...out];
+}
+
+export function listMatrixRows(projectId = 1): MatrixRowItem[] {
+  const pullUrl = (number: number) => {
+    const [owner, name] = (config.giteeRepo ?? "").split("/");
+    return owner && name ? `https://gitee.com/${owner}/${name}/pulls/${number}` : null;
+  };
+  const pullMeta = new Map(
+    queryAll<{ number: number; state: string; filesJson: string; title: string; authorsJson: string }>(
+      `SELECT number, state, files_json AS filesJson, title, authors_json AS authorsJson FROM pull_requests WHERE project_id = ?`,
+      [projectId]
+    ).map((row) => [Number(row.number), {
+      state: row.state,
+      files: parseJson<string[]>(row.filesJson, []),
+      title: row.title,
+      authors: parseJson<Array<{ name: string | null; email: string | null }>>(row.authorsJson, [])
+    }])
+  );
+  return queryAll<{
+    id: number; groupName: string; itemName: string; owner: string; prNumbers: string;
+    blocked: number | null; blockerModule: string; blockerOwner: string; blockerProgress: string;
+    engageNote: string; updatedBy: string | null; updatedAt: string;
+  }>(
+    `SELECT id, group_name AS groupName, item_name AS itemName, owner, pr_numbers AS prNumbers,
+            blocked, blocker_module AS blockerModule, blocker_owner AS blockerOwner,
+            blocker_progress AS blockerProgress, engage_note AS engageNote,
+            updated_by AS updatedBy, updated_at AS updatedAt
+     FROM matrix_rows WHERE project_id = ? ORDER BY sort_index, id`, [projectId]
+  ).map((row) => {
+    const prs: MatrixRowPr[] = parsePrNumbers(row.prNumbers).map((number) => {
+      const meta = pullMeta.get(number);
+      const files = meta?.files ?? [];
+      return {
+        number,
+        state: meta?.state ?? "unknown",
+        url: pullUrl(number),
+        backend: files.some((f) => !/^frontend\//.test(f) && !/^(docs|specs)\//.test(f)),
+        frontend: files.some((f) => /^frontend\//.test(f)),
+        sync: isMergeSync(meta?.title ?? "", meta?.authors.length ?? 1)
+      };
+    });
+    return {
+      id: row.id,
+      groupName: row.groupName,
+      itemName: row.itemName,
+      owner: row.owner,
+      prNumbers: row.prNumbers,
+      prs,
+      blocked: row.blocked === null ? null : Boolean(row.blocked),
+      blockerModule: row.blockerModule,
+      blockerOwner: row.blockerOwner,
+      blockerProgress: row.blockerProgress,
+      engageNote: row.engageNote,
+      updatedBy: row.updatedBy,
+      updatedAt: row.updatedAt
+    };
+  });
+}
+
+export function upsertMatrixRow(projectId: number, input: {
+  id?: number; groupName: string; itemName: string; owner: string;
+  prNumbers: string; blocked: boolean | null;
+  blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string;
+}, updatedBy: string): { id: number } {
+  const clean = {
+    group: String(input.groupName ?? "").trim() || "未分组",
+    item: String(input.itemName ?? "").trim() || "未命名交付项",
+    owner: String(input.owner ?? "").trim(),
+    prs: String(input.prNumbers ?? "").slice(0, 300),
+    blockerModule: String(input.blockerModule ?? "").slice(0, 1000),
+    blockerOwner: String(input.blockerOwner ?? "").slice(0, 300),
+    blockerProgress: String(input.blockerProgress ?? "").slice(0, 1000),
+    engageNote: String(input.engageNote ?? "").slice(0, 1000)
+  };
+  const blocked = input.blocked === null || input.blocked === undefined ? null : input.blocked ? 1 : 0;
+  if (input.id) {
+    execute(
+      `UPDATE matrix_rows SET group_name = ?, item_name = ?, owner = ?, pr_numbers = ?, blocked = ?,
+              blocker_module = ?, blocker_owner = ?, blocker_progress = ?, engage_note = ?,
+              updated_by = ?, updated_at = datetime('now')
+       WHERE id = ? AND project_id = ?`,
+      [clean.group, clean.item, clean.owner, clean.prs, blocked, clean.blockerModule, clean.blockerOwner,
+       clean.blockerProgress, clean.engageNote, updatedBy, input.id, projectId]
+    );
+    audit(null, updatedBy, "matrix_row_update", "matrix_row", input.id, { item: clean.item });
+    return { id: input.id };
+  }
+  const maxSort = queryOne<{ m: number | null }>(`SELECT MAX(sort_index) AS m FROM matrix_rows WHERE project_id = ?`, [projectId])?.m ?? 0;
+  const inserted = execute(
+    `INSERT INTO matrix_rows (project_id, group_name, item_name, owner, pr_numbers, blocked, blocker_module, blocker_owner, blocker_progress, engage_note, sort_index, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    [projectId, clean.group, clean.item, clean.owner, clean.prs, blocked, clean.blockerModule,
+     clean.blockerOwner, clean.blockerProgress, clean.engageNote, (maxSort ?? 0) + 1, updatedBy]
+  );
+  const id = Number(inserted.lastInsertRowid);
+  audit(null, updatedBy, "matrix_row_create", "matrix_row", id, { item: clean.item });
+  return { id };
+}
+
+export function deleteMatrixRow(projectId: number, id: number, updatedBy: string) {
+  execute(`DELETE FROM matrix_rows WHERE id = ? AND project_id = ?`, [id, projectId]);
+  audit(null, updatedBy, "matrix_row_delete", "matrix_row", id);
+  return { ok: true };
+}
+
+/** 初始化：把当前看板的 BOSC 任务导成交付项行（每任务一行，PR 号取其关联 PR），一次性使用 */
+export function initMatrixRowsFromBoard(projectId = 1): { created: number } {
+  const existing = queryOne<{ c: number }>(`SELECT COUNT(*) AS c FROM matrix_rows WHERE project_id = ?`, [projectId])?.c ?? 0;
+  if (existing > 0) return { created: 0 };
+  const board = buildBoard(projectId);
+  let sort = 0;
+  let created = 0;
+  for (const group of board.groups) {
+    for (const task of group.tasks) {
+      const prs = task.pulls
+        .filter((p) => !p.sync && p.state !== "closed")
+        .map((p) => `!${p.number}`)
+        .join(", ");
+      execute(
+        `INSERT INTO matrix_rows (project_id, group_name, item_name, owner, pr_numbers, sort_index, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'system-init', datetime('now'))`,
+        [projectId, group.name, task.name, task.ownerName ?? "", prs, sort++]
+      );
+      created += 1;
+    }
+  }
+  return { created };
+}

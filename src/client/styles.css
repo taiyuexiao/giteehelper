@@ -926,3 +926,25 @@ textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 .block-chip.unset { background: #eef2f3; color: #8fa2ab; font-weight: 500; }
 .matrix-row textarea { width: 100%; font-size: 12px; border: 1px solid #d5dee2; border-radius: 6px; padding: 5px 7px; resize: vertical; }
 .matrix-row select { font-size: 12px; border: 1px solid #d5dee2; border-radius: 6px; padding: 4px 6px; background: #fff; }
+
+/* ---------- 责任矩阵 v2 ---------- */
+.matrix-scroll { overflow-x: auto; }
+.matrix-table { min-width: 1180px; width: 100%; border-collapse: collapse; }
+.matrix-table .col-item { min-width: 220px; width: 20%; }
+.matrix-table .col-mark { width: 116px; text-align: center; }
+.matrix-table .col-blocked { width: 72px; }
+.matrix-table .col-owner { width: 110px; }
+.matrix-table .col-note { width: 15%; }
+.matrix-table .col-op { width: 40px; }
+.mark-cell { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.mark-cell small { color: #9aa9b1; font-size: 10px; }
+.pr-link { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #2f7fa8; text-decoration: none; }
+.pr-link:hover { text-decoration: underline; }
+.pr-link.plain { color: #8fa2ab; }
+.block-chip { white-space: nowrap; display: inline-block; }
+.matrix-note { font-size: 12px; color: #445c68; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.matrix-fullscreen { max-height: 82vh; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.matrix-fullscreen .matrix-panel { margin-bottom: 0; }
+.matrix-fullscreen .matrix-group-head { padding: 10px 14px 6px; }
+.matrix-edit label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: #5d7280; }
+.matrix-edit input, .matrix-edit textarea, .matrix-edit select { font-size: 13px; padding: 7px 9px; border: 1px solid #d5dee2; border-radius: 8px; }

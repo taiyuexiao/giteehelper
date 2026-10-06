@@ -1,99 +1,174 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pencil, Search } from "lucide-react";
+import { Maximize2, Pencil, Plus, Search, X } from "lucide-react";
 import { api } from "../api";
-import { Loading } from "../components";
+import { Loading, Modal } from "../components";
 
 /**
- * 责任矩阵：字段与负责人交付表一一对应——
- * 大模块 | 小模块 | 后端 | 前端 | 完成 | 阻塞？ | 阻塞模块 | 阻塞方负责人 | 阻塞方进展（RFC/PR/合入） | 我们可否部分介入
- * 后端/前端/完成由 PR 数据自动推导；阻塞五字段人工标注（admin/maintainer 行内编辑）。
+ * 责任矩阵 v2：交付项粒度（对齐负责人的交付表）——
+ * 大模块 | 小模块 | 后端 | 前端 | 完成 | 阻塞？ | 阻塞模块 | 阻塞方负责人 | 阻塞方进展 | 我们可否部分介入
+ * PR 号（!399）自动解析出状态、交付面与可点链接；阻塞字段人工维护。
  */
 
-type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
-
-type MatrixTask = {
-  moduleId: number; key: string; name: string; ownerUserId: number | null; ownerName: string | null;
-  group: string; state: TaskState; codeMerged: number; codeOpen: number;
-  sub: { backend: boolean; frontend: boolean; docs: boolean; openBackend: boolean; openFrontend: boolean };
-  frontendPending: boolean;
-};
-type Blocker = {
-  moduleId: number; blocked: boolean | null;
+type PrInfo = { number: number; state: string; url: string | null; backend: boolean; frontend: boolean; sync: boolean };
+type Row = {
+  id: number; groupName: string; itemName: string; owner: string; prNumbers: string;
+  prs: PrInfo[];
+  blocked: boolean | null;
   blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string;
   updatedBy: string | null; updatedAt: string;
 };
 
-const PAGE_SIZE_NOTE = "点击铅笔编辑本行的阻塞标注";
+const prLink = (pr: PrInfo) => (
+  pr.url
+    ? <a key={pr.number} className="pr-link" href={pr.url} target="_blank" rel="noreferrer">!{pr.number}</a>
+    : <span key={pr.number} className="pr-link plain">!{pr.number}</span>
+);
 
-/** 完成列：✅ 已合并 · 🟡 在审/在飞 · ❌ 未完成 */
-function DoneCell({ state }: { state: TaskState }) {
-  if (state === "done") return <span className="delivery yes" title="代码 PR 已合并">✅</span>;
-  if (state === "developing") return <span className="delivery wip" title="PR 在审/在飞">🟡</span>;
-  return <span className="delivery no" title="未完成">❌</span>;
-}
-
-/** 交付面单元格：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面 */
-function DeliveryCell({ merged, open, declared, title }: { merged: boolean; open: boolean; declared: boolean; title: string }) {
-  if (merged) return <span className="delivery yes" title={`${title}：已合并交付`}>✅</span>;
-  if (open) return <span className="delivery wip" title={`${title}：在飞 PR 进行中`}>🟡</span>;
-  if (declared) return <span className="delivery no" title={`${title}：声明了此面但未动`}>❌</span>;
-  return <span className="delivery na" title={`${title}：无此交付面`}>—</span>;
+/** 交付面/完成列：符号 + 可点 PR 号 */
+function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: PrInfo[] }) {
+  const relevant = prs.filter((pr) => !pr.sync && (kind === "done" || (kind === "backend" ? pr.backend : pr.frontend)));
+  const merged = relevant.filter((pr) => pr.state === "merged");
+  const open = relevant.filter((pr) => pr.state === "open");
+  if (merged.length) {
+    return (
+      <span className="mark-cell">
+        <span className="delivery yes">✅</span>
+        {merged.slice(0, 3).map(prLink)}
+        {merged.length > 3 && <small>+{merged.length - 3}</small>}
+      </span>
+    );
+  }
+  if (open.length) {
+    return (
+      <span className="mark-cell">
+        <span className="delivery wip">🟡</span>
+        {open.slice(0, 3).map(prLink)}
+        {open.length > 3 && <small>+{open.length - 3}</small>}
+      </span>
+    );
+  }
+  return <span className="mark-cell"><span className="delivery no">❌</span></span>;
 }
 
 export default function MatrixTab({ user }: { user: { role: string } }) {
-  const [board, setBoard] = useState<Array<{ name: string; ownerNames: string[]; tasks: MatrixTask[] }> | null>(null);
-  const [blockers, setBlockers] = useState<Blocker[]>([]);
+  const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState("");
   const [person, setPerson] = useState<string | null>(null);
   const [onlyOpen, setOnlyOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [editing, setEditing] = useState<Partial<Row> | null>(null);
   const canEdit = user.role === "admin" || user.role === "maintainer";
 
   const load = useCallback(() => {
     setBusy(true);
-    Promise.all([
-      api<{ groups: Array<{ name: string; ownerNames: string[]; tasks: Array<MatrixTask & { group?: string }> }> }>("/progress/board"),
-      api<Blocker[]>("/progress/blockers")
-    ]).then(([boardData, blockerData]) => {
-      setBoard(boardData.groups.map((group) => ({ ...group, tasks: group.tasks.map((task) => ({ ...task, group: group.name })) })));
-      setBlockers(blockerData);
+    api<Row[]>("/progress/matrix-rows").then((data) => {
+      if (data.length === 0 && canEdit) {
+        // 空表时自动初始化（BOSC 任务 → 交付项行），之后完全人工维护
+        api("/progress/matrix-init", { method: "POST", body: JSON.stringify({}) })
+          .then(() => api<Row[]>("/progress/matrix-rows"))
+          .then((rows2) => setRows(rows2));
+      } else {
+        setRows(data);
+      }
       setError("");
     }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, []);
+  }, [canEdit]);
   useEffect(() => { load(); }, [load]);
-
-  // WebHook 落库后矩阵即新：60 秒自动重取
   useEffect(() => {
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const blockerByModule = useMemo(() => new Map(blockers.map((item) => [item.moduleId, item])), [blockers]);
-
   const people = useMemo(() => {
     const map = new Map<string, number>();
-    for (const group of board ?? []) for (const task of group.tasks) {
-      if (task.ownerName) map.set(task.ownerName, (map.get(task.ownerName) ?? 0) + 1);
-    }
+    for (const row of rows ?? []) if (row.owner) map.set(row.owner, (map.get(row.owner) ?? 0) + 1);
     return [...map.entries()].sort((a, b) => b[1] - a[1]);
-  }, [board]);
+  }, [rows]);
 
-  const matches = (task: MatrixTask) => {
-    if (person && task.ownerName !== person) return false;
-    if (onlyOpen && task.state === "done") return false;
-    if (keyword && !`${task.name} ${task.key} ${task.ownerName ?? ""}`.toLowerCase().includes(keyword.toLowerCase())) return false;
+  const isDone = (row: Row) => row.prs.some((pr) => !pr.sync && pr.state === "merged");
+  const filtered = useMemo(() => (rows ?? []).filter((row) => {
+    if (person && row.owner !== person) return false;
+    if (onlyOpen && isDone(row)) return false;
+    if (keyword && !`${row.groupName} ${row.itemName} ${row.owner}`.toLowerCase().includes(keyword.toLowerCase())) return false;
     return true;
-  };
+  }), [rows, person, onlyOpen, keyword]);
 
   const groups = useMemo(() => {
-    if (!board) return [];
-    return board
-      .map((group) => ({ ...group, tasks: group.tasks.filter(matches) }))
-      .filter((group) => group.tasks.length > 0);
-  }, [board, person, onlyOpen, keyword]);
+    const map = new Map<string, Row[]>();
+    for (const row of filtered) {
+      const list = map.get(row.groupName) ?? [];
+      list.push(row);
+      map.set(row.groupName, list);
+    }
+    return [...map.entries()];
+  }, [filtered]);
 
-  if (!board && !error) return <Loading />;
+  if (!rows && !error) return <Loading />;
+
+  const table = (compact: boolean) => (
+    groups.map(([groupName, list]) => (
+      <section key={groupName} className="panel matrix-panel">
+        <header className="matrix-group-head">
+          <div>
+            <h3>{groupName}</h3>
+            <small>{list.length} 个交付项{list.some((row) => row.owner) ? ` · 负责人 ${[...new Set(list.map((row) => row.owner).filter(Boolean))].join(" · ")}` : ""}</small>
+          </div>
+          {canEdit && !compact && (
+            <button className="secondary-button" onClick={() => setEditing({ groupName, itemName: "", owner: "", prNumbers: "", blockerModule: "", blockerOwner: "", blockerProgress: "", engageNote: "" })}>
+              <Plus size={14} />添加交付项
+            </button>
+          )}
+        </header>
+        <div className="table-wrap matrix-scroll">
+          <table className="matrix-table">
+            <thead>
+              <tr>
+                <th className="col-item">小模块</th>
+                <th className="col-mark">后端</th>
+                <th className="col-mark">前端</th>
+                <th className="col-mark">完成</th>
+                <th className="col-blocked">阻塞？</th>
+                <th className="col-note">阻塞模块</th>
+                <th className="col-owner">阻塞方负责人</th>
+                <th className="col-note">阻塞方进展（RFC/PR/合入）</th>
+                <th className="col-note">我们可否部分介入</th>
+                {canEdit && <th className="col-op"></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((row) => (
+                <tr key={row.id} className="matrix-row">
+                  <td className="col-item">
+                    <strong>{row.itemName}</strong>
+                    {row.owner && <small>{row.owner}</small>}
+                  </td>
+                  <td className="col-mark"><MarkCell kind="backend" prs={row.prs} /></td>
+                  <td className="col-mark"><MarkCell kind="frontend" prs={row.prs} /></td>
+                  <td className="col-mark"><MarkCell kind="done" prs={row.prs} /></td>
+                  <td className="col-blocked">
+                    {row.blocked === true ? <span className="block-chip yes">是</span>
+                      : row.blocked === false ? <span className="block-chip no">否</span>
+                        : <span className="block-chip unset">未标注</span>}
+                  </td>
+                  <td className="col-note matrix-note">{row.blockerModule || <small>—</small>}</td>
+                  <td className="col-owner matrix-note">{row.blockerOwner || <small>—</small>}</td>
+                  <td className="col-note matrix-note">{row.blockerProgress || <small>—</small>}</td>
+                  <td className="col-note matrix-note">{row.engageNote || <small>—</small>}</td>
+                  {canEdit && (
+                    <td className="col-op">
+                      <button className="icon-button" onClick={() => setEditing(row)}><Pencil size={13} /></button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))
+  );
 
   return (
     <>
@@ -112,156 +187,57 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
             <input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} style={{ accentColor: "#2f7fa8" }} />
             隐藏已完成
           </label>
-          <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索任务 / 编号" /></label>
-          <small className="delivery-legend">后端/前端：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面</small>
-          <button className="secondary-button" style={{ marginLeft: "auto" }} onClick={load} disabled={busy}>
-            {busy ? "刷新中…" : "刷新"}
-          </button>
+          <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索交付项 / 大模块" /></label>
+          <small className="delivery-legend">✅ 已合并 · 🟡 在审在飞 · ❌ 未动（符号旁 !NN 点击直达 PR）</small>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button className="secondary-button" onClick={() => setFullscreen(true)}><Maximize2 size={14} />全屏</button>
+            <button className="secondary-button" onClick={load} disabled={busy}>{busy ? "刷新中…" : "刷新"}</button>
+          </div>
         </div>
       </section>
 
-      {groups.map((group) => {
-        const done = group.tasks.filter((task) => task.state === "done").length;
-        const rate = group.tasks.length ? Math.round((done / group.tasks.length) * 100) : 0;
-        return (
-          <section key={group.name} className="panel matrix-panel">
-            <header className="matrix-group-head">
-              <div>
-                <h3>{group.name}</h3>
-                <small>{group.ownerNames.length ? `负责人 ${group.ownerNames.join(" · ")}` : "未分配负责人"}</small>
-              </div>
-              <div className="matrix-group-progress">
-                <div className="task-progress-track"><i style={{ width: `${rate}%` }} /></div>
-                <small>{done}/{group.tasks.length} 完成 · {rate}%</small>
-              </div>
-            </header>
-            <div className="table-wrap">
-              <table className="matrix-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: "22%" }}>小模块</th>
-                    <th style={{ width: 52, textAlign: "center" }}>后端</th>
-                    <th style={{ width: 52, textAlign: "center" }}>前端</th>
-                    <th style={{ width: 52, textAlign: "center" }}>完成</th>
-                    <th style={{ width: 64 }}>阻塞？</th>
-                    <th style={{ width: "17%" }}>阻塞模块</th>
-                    <th style={{ width: "11%" }}>阻塞方负责人</th>
-                    <th style={{ width: "17%" }}>阻塞方进展（RFC/PR/合入）</th>
-                    <th>我们可否部分介入</th>
-                    {canEdit && <th style={{ width: 36 }}></th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.tasks.map((task) => (
-                    <MatrixRow
-                      key={task.moduleId}
-                      task={task}
-                      blocker={blockerByModule.get(task.moduleId)}
-                      canEdit={canEdit}
-                      onSaved={load}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        );
-      })}
-      {groups.length === 0 && <section className="panel"><div className="empty-state"><h2>没有匹配的任务</h2><p>调整成员或筛选条件后重试。</p></div></section>}
+      {table(false)}
+
+      {groups.length === 0 && (
+        <section className="panel"><div className="empty-state"><h2>没有匹配的交付项</h2><p>调整成员或筛选条件后重试。</p></div></section>
+      )}
+
+      {fullscreen && (
+        <Modal title="责任矩阵" wide onClose={() => setFullscreen(false)}>
+          <div className="matrix-fullscreen">{table(true)}</div>
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal title={editing.id ? "编辑交付项" : "添加交付项"} onClose={() => setEditing(null)}>
+          <div className="form-grid matrix-edit">
+            <label>大模块<input value={editing.groupName ?? ""} onChange={(e) => setEditing({ ...editing, groupName: e.target.value })} placeholder="如 评分规则库（RFC-20260911）" /></label>
+            <label>小模块<input value={editing.itemName ?? ""} onChange={(e) => setEditing({ ...editing, itemName: e.target.value })} placeholder="如 T2 判法引擎+样题验证" /></label>
+            <label>负责人<input value={editing.owner ?? ""} onChange={(e) => setEditing({ ...editing, owner: e.target.value })} placeholder="如 师沛琳" /></label>
+            <label>PR 号（逗号分隔）<input value={editing.prNumbers ?? ""} onChange={(e) => setEditing({ ...editing, prNumbers: e.target.value })} placeholder="!399, !417" /></label>
+            <label>阻塞？
+              <select value={editing.blocked === true ? "yes" : editing.blocked === false ? "no" : ""} onChange={(e) => setEditing({ ...editing, blocked: e.target.value === "" ? null : e.target.value === "yes" })}>
+                <option value="">未标注</option><option value="yes">是</option><option value="no">否</option>
+              </select>
+            </label>
+            <label>阻塞方负责人<input value={editing.blockerOwner ?? ""} onChange={(e) => setEditing({ ...editing, blockerOwner: e.target.value })} placeholder="谁负责解锁" /></label>
+            <label className="full">阻塞模块<input value={editing.blockerModule ?? ""} onChange={(e) => setEditing({ ...editing, blockerModule: e.target.value })} placeholder="卡住这项工作的是什么" /></label>
+            <label className="full">阻塞方进展（RFC/PR/合入）<textarea value={editing.blockerProgress ?? ""} onChange={(e) => setEditing({ ...editing, blockerProgress: e.target.value })} rows={2} /></label>
+            <label className="full">我们可否部分介入<textarea value={editing.engageNote ?? ""} onChange={(e) => setEditing({ ...editing, engageNote: e.target.value })} rows={2} placeholder="可以 / 有限 / 部分 / 否 + 说明" /></label>
+          </div>
+          <div className="modal-actions">
+            {editing.id && (
+              <button className="danger-button" onClick={() => {
+                void api("/progress/matrix-row/delete", { method: "POST", body: JSON.stringify({ id: editing.id }) }).then(() => { setEditing(null); load(); });
+              }}><X size={15} />删除</button>
+            )}
+            <button className="secondary-button" onClick={() => setEditing(null)}>取消</button>
+            <button className="primary-button" onClick={() => {
+              void api("/progress/matrix-row", { method: "POST", body: JSON.stringify(editing) }).then(() => { setEditing(null); load(); });
+            }}>保存</button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
-
-function MatrixRow({ task, blocker, canEdit, onSaved }: {
-  task: MatrixTask; blocker?: Blocker; canEdit: boolean; onSaved: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [blocked, setBlocked] = useState(blocker?.blocked === true ? "yes" : blocker?.blocked === false ? "no" : "");
-  const [blockerModule, setBlockerModule] = useState(blocker?.blockerModule ?? "");
-  const [blockerOwner, setBlockerOwner] = useState(blocker?.blockerOwner ?? "");
-  const [blockerProgress, setBlockerProgress] = useState(blocker?.blockerProgress ?? "");
-  const [engageNote, setEngageNote] = useState(blocker?.engageNote ?? "");
-
-  useEffect(() => {
-    setBlocked(blocker?.blocked === true ? "yes" : blocker?.blocked === false ? "no" : "");
-    setBlockerModule(blocker?.blockerModule ?? "");
-    setBlockerOwner(blocker?.blockerOwner ?? "");
-    setBlockerProgress(blocker?.blockerProgress ?? "");
-    setEngageNote(blocker?.engageNote ?? "");
-  }, [blocker]);
-
-  async function save() {
-    setBusy(true);
-    try {
-      await api("/progress/blocker", {
-        method: "POST",
-        body: JSON.stringify({
-          moduleId: task.moduleId,
-          blocked: blocked === "" ? null : blocked === "yes",
-          blockerModule, blockerOwner, blockerProgress, engageNote
-        })
-      });
-      setEditing(false);
-      onSaved();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const feDeclared = task.frontendPending || task.sub.frontend || task.sub.openFrontend;
-  const beDeclared = task.sub.backend || task.sub.openBackend || task.codeMerged > 0 || task.codeOpen > 0;
-  const blockChip = blocker === undefined || blocker.blocked === null
-    ? <span className="block-chip unset">未标注</span>
-    : blocker.blocked ? <span className="block-chip yes">是</span>
-      : <span className="block-chip no">否</span>;
-
-  return (
-    <tr className="matrix-row">
-      <td>
-        <strong>{task.name}</strong>
-        <small>{task.key} · {task.ownerName ?? "未分配"}{task.frontendPending && task.state !== "not_started" && task.state !== "designing" && <em className="fe-pending">前端未动</em>}</small>
-      </td>
-      <td style={{ textAlign: "center" }}><DeliveryCell merged={task.sub.backend} open={task.sub.openBackend} declared={beDeclared} title="后端" /></td>
-      <td style={{ textAlign: "center" }}><DeliveryCell merged={task.sub.frontend} open={task.sub.openFrontend} declared={feDeclared} title="前端" /></td>
-      <td style={{ textAlign: "center" }}><DoneCell state={task.state} /></td>
-      {editing && canEdit ? (
-        <>
-          <td>
-            <select value={blocked} onChange={(event) => setBlocked(event.target.value)}>
-              <option value="">未标注</option>
-              <option value="yes">是</option>
-              <option value="no">否</option>
-            </select>
-          </td>
-          <td><textarea rows={2} value={blockerModule} onChange={(event) => setBlockerModule(event.target.value)} placeholder="卡住这项工作的是什么" /></td>
-          <td><input value={blockerOwner} onChange={(event) => setBlockerOwner(event.target.value)} placeholder="谁负责解锁" /></td>
-          <td><textarea rows={2} value={blockerProgress} onChange={(event) => setBlockerProgress(event.target.value)} placeholder="对方的 RFC/PR/合入进展" /></td>
-          <td><textarea rows={2} value={engageNote} onChange={(event) => setEngageNote(event.target.value)} placeholder="可以 / 有限 / 部分 / 否，加一句说明" /></td>
-          {canEdit && (
-            <td>
-              <div className="row-actions">
-                <button className="small-button" disabled={busy} onClick={() => void save()}>{busy ? "…" : "存"}</button>
-                <button className="small-button" onClick={() => setEditing(false)}>取消</button>
-              </div>
-            </td>
-          )}
-        </>
-      ) : (
-        <>
-          <td>{blockChip}</td>
-          <td className="matrix-note">{blocker?.blockerModule || <small>—</small>}</td>
-          <td className="matrix-note">{blocker?.blockerOwner || <small>—</small>}</td>
-          <td className="matrix-note">{blocker?.blockerProgress || <small>—</small>}</td>
-          <td className="matrix-note">{blocker?.engageNote || <small>—</small>}</td>
-          {canEdit && (
-            <td title={PAGE_SIZE_NOTE}>
-              <button className="icon-button" onClick={() => setEditing(true)}><Pencil size={13} /></button>
-            </td>
-          )}
-        </>
-      )}
-    </tr>
-  );
-}
-

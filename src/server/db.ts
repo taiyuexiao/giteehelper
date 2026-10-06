@@ -281,6 +281,24 @@ CREATE TABLE IF NOT EXISTS module_group_aliases (
   UNIQUE(project_id, group_name)
 );
 
+-- 进度页责任矩阵：交付项粒度的行（人工维护，PR 号自动解析出状态/交付面/链接）
+CREATE TABLE IF NOT EXISTS matrix_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  group_name TEXT NOT NULL,
+  item_name TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT '',
+  pr_numbers TEXT NOT NULL DEFAULT '',
+  blocked INTEGER,
+  blocker_module TEXT NOT NULL DEFAULT '',
+  blocker_owner TEXT NOT NULL DEFAULT '',
+  blocker_progress TEXT NOT NULL DEFAULT '',
+  engage_note TEXT NOT NULL DEFAULT '',
+  sort_index INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- 进度页责任矩阵：任务的人工阻塞标注（是否阻塞/阻塞点与阻塞方/介入建议）
 CREATE TABLE IF NOT EXISTS task_blockers (
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
