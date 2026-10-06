@@ -286,8 +286,10 @@ CREATE TABLE IF NOT EXISTS task_blockers (
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
   blocked INTEGER,
-  blocker_note TEXT NOT NULL DEFAULT '',
-  action_note TEXT NOT NULL DEFAULT '',
+  blocker_module TEXT NOT NULL DEFAULT '',
+  blocker_owner TEXT NOT NULL DEFAULT '',
+  blocker_progress TEXT NOT NULL DEFAULT '',
+  engage_note TEXT NOT NULL DEFAULT '',
   updated_by TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (project_id, module_id)
@@ -322,6 +324,11 @@ CREATE TABLE IF NOT EXISTS pull_task_ai (
 
 // AI/人工补充关联的来源标记（ai | manual），旧库补列（必须在建表之后执行）
 ensureColumn("pull_task_ai", "source", "TEXT NOT NULL DEFAULT 'ai'");
+// 责任矩阵阻塞字段：旧结构（blocker_note/action_note）迁移到四字段后弃用旧列
+ensureColumn("task_blockers", "blocker_module", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("task_blockers", "blocker_owner", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("task_blockers", "blocker_progress", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("task_blockers", "engage_note", "TEXT NOT NULL DEFAULT ''");
 
 // 契约归属：RFC meta 是仓库里已有的机器可读契约，反查工作项比人写 glob 可靠
 db.exec(`

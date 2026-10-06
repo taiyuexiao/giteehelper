@@ -1357,22 +1357,31 @@ export function dismissAssociation(pullNumber: number, moduleId: number, project
 export interface TaskBlocker {
   moduleId: number;
   blocked: boolean | null;
-  blockerNote: string;
-  actionNote: string;
+  /** 阻塞模块：卡住这项工作的是什么（如 Q22 规格未回填、行内网关） */
+  blockerModule: string;
+  /** 阻塞方负责人 */
+  blockerOwner: string;
+  /** 阻塞方进展（RFC/PR/合入） */
+  blockerProgress: string;
+  /** 我们可否部分介入 */
+  engageNote: string;
   updatedBy: string | null;
   updatedAt: string;
 }
 
 export function listBlockers(projectId = 1): TaskBlocker[] {
-  return queryAll<{ moduleId: number; blocked: number | null; blockerNote: string; actionNote: string; updatedBy: string | null; updatedAt: string }>(
-    `SELECT module_id AS moduleId, blocked, blocker_note AS blockerNote, action_note AS actionNote,
+  return queryAll<{ moduleId: number; blocked: number | null; blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string; updatedBy: string | null; updatedAt: string }>(
+    `SELECT module_id AS moduleId, blocked, blocker_module AS blockerModule, blocker_owner AS blockerOwner,
+            blocker_progress AS blockerProgress, engage_note AS engageNote,
             updated_by AS updatedBy, updated_at AS updatedAt
      FROM task_blockers WHERE project_id = ?`, [projectId]
   ).map((row) => ({
     moduleId: row.moduleId,
     blocked: row.blocked === null ? null : Boolean(row.blocked),
-    blockerNote: row.blockerNote,
-    actionNote: row.actionNote,
+    blockerModule: row.blockerModule,
+    blockerOwner: row.blockerOwner,
+    blockerProgress: row.blockerProgress,
+    engageNote: row.engageNote,
     updatedBy: row.updatedBy,
     updatedAt: row.updatedAt
   }));
@@ -1381,20 +1390,21 @@ export function listBlockers(projectId = 1): TaskBlocker[] {
 export function upsertBlocker(
   projectId: number,
   moduleId: number,
-  blocked: boolean | null,
-  blockerNote: string,
-  actionNote: string,
+  input: { blocked: boolean | null; blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string },
   updatedBy: string
 ) {
   execute(
-    `INSERT INTO task_blockers (project_id, module_id, blocked, blocker_note, action_note, updated_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `INSERT INTO task_blockers (project_id, module_id, blocked, blocker_module, blocker_owner, blocker_progress, engage_note, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(project_id, module_id) DO UPDATE SET
-       blocked = excluded.blocked, blocker_note = excluded.blocker_note,
-       action_note = excluded.action_note, updated_by = excluded.updated_by,
+       blocked = excluded.blocked, blocker_module = excluded.blocker_module,
+       blocker_owner = excluded.blocker_owner, blocker_progress = excluded.blocker_progress,
+       engage_note = excluded.engage_note, updated_by = excluded.updated_by,
        updated_at = datetime('now')`,
-    [projectId, moduleId, blocked === null ? null : blocked ? 1 : 0, blockerNote.slice(0, 2000), actionNote.slice(0, 2000), updatedBy]
+    [projectId, moduleId, input.blocked === null ? null : input.blocked ? 1 : 0,
+     input.blockerModule.slice(0, 1000), input.blockerOwner.slice(0, 300),
+     input.blockerProgress.slice(0, 1000), input.engageNote.slice(0, 1000), updatedBy]
   );
-  audit(null, updatedBy, "blocker_update", "module", moduleId, { blocked, blockerNote, actionNote });
+  audit(null, updatedBy, "blocker_update", "module", moduleId, { ...input });
   return { ok: true };
 }

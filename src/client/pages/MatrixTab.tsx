@@ -4,28 +4,33 @@ import { api } from "../api";
 import { Loading } from "../components";
 
 /**
- * 责任矩阵：每个任务一行——交付面（后端/前端自动推导）、五态、阻塞标注（人工维护）。
- * 交付列：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面；阻塞三字段为人工标注（admin/maintainer 可编辑）。
+ * 责任矩阵：字段与负责人交付表一一对应——
+ * 大模块 | 小模块 | 后端 | 前端 | 完成 | 阻塞？ | 阻塞模块 | 阻塞方负责人 | 阻塞方进展（RFC/PR/合入） | 我们可否部分介入
+ * 后端/前端/完成由 PR 数据自动推导；阻塞五字段人工标注（admin/maintainer 行内编辑）。
  */
 
 type TaskState = "not_started" | "designing" | "designed" | "developing" | "done";
 
 type MatrixTask = {
   moduleId: number; key: string; name: string; ownerUserId: number | null; ownerName: string | null;
-  group: string; state: TaskState; docMerged: number; docOpen: number; codeMerged: number; codeOpen: number;
+  group: string; state: TaskState; codeMerged: number; codeOpen: number;
   sub: { backend: boolean; frontend: boolean; docs: boolean; openBackend: boolean; openFrontend: boolean };
   frontendPending: boolean;
 };
-type Blocker = { moduleId: number; blocked: boolean | null; blockerNote: string; actionNote: string; updatedBy: string | null; updatedAt: string };
-type MatrixGroup = { name: string; ownerNames: string[]; tasks: MatrixTask[] };
+type Blocker = {
+  moduleId: number; blocked: boolean | null;
+  blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string;
+  updatedBy: string | null; updatedAt: string;
+};
 
-const STATE_LABELS: Record<TaskState, string> = {
-  not_started: "未开始", designing: "设计中", designed: "设计定稿", developing: "开发中", done: "完成"
-};
-const STATE_BADGE: Record<TaskState, string> = {
-  not_started: "status-blocked", designing: "status-running", designed: "status-clarification",
-  developing: "status-running", done: "status-passed"
-};
+const PAGE_SIZE_NOTE = "点击铅笔编辑本行的阻塞标注";
+
+/** 完成列：✅ 已合并 · 🟡 在审/在飞 · ❌ 未完成 */
+function DoneCell({ state }: { state: TaskState }) {
+  if (state === "done") return <span className="delivery yes" title="代码 PR 已合并">✅</span>;
+  if (state === "developing") return <span className="delivery wip" title="PR 在审/在飞">🟡</span>;
+  return <span className="delivery no" title="未完成">❌</span>;
+}
 
 /** 交付面单元格：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面 */
 function DeliveryCell({ merged, open, declared, title }: { merged: boolean; open: boolean; declared: boolean; title: string }) {
@@ -36,14 +41,14 @@ function DeliveryCell({ merged, open, declared, title }: { merged: boolean; open
 }
 
 export default function MatrixTab({ user }: { user: { role: string } }) {
-  const [board, setBoard] = useState<MatrixGroup[] | null>(null);
+  const [board, setBoard] = useState<Array<{ name: string; ownerNames: string[]; tasks: MatrixTask[] }> | null>(null);
   const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [error, setError] = useState("");
   const [person, setPerson] = useState<string | null>(null);
   const [onlyOpen, setOnlyOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
-  const canEdit = user.role === "admin" || user.role === "maintainer";
   const [busy, setBusy] = useState(false);
+  const canEdit = user.role === "admin" || user.role === "maintainer";
 
   const load = useCallback(() => {
     setBusy(true);
@@ -58,7 +63,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // WebHook 落库后矩阵数据即新：每 60 秒自动重取，挂着页面就能看到 PR 提交/合并的实时变化
+  // WebHook 落库后矩阵即新：60 秒自动重取
   useEffect(() => {
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
@@ -103,12 +108,12 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
           ))}
         </div>
         <div className="stream-toolbar">
-          <label className="legend-chip on" style={{ cursor: "default" }}>
+          <label className="legend-chip on" style={{ cursor: "default", gap: 6 }}>
             <input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} style={{ accentColor: "#2f7fa8" }} />
             隐藏已完成
           </label>
           <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索任务 / 编号" /></label>
-          <small className="delivery-legend">交付列：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面</small>
+          <small className="delivery-legend">后端/前端：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面</small>
           <button className="secondary-button" style={{ marginLeft: "auto" }} onClick={load} disabled={busy}>
             {busy ? "刷新中…" : "刷新"}
           </button>
@@ -134,15 +139,16 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
               <table className="matrix-table">
                 <thead>
                   <tr>
-                    <th style={{ width: "26%" }}>任务</th>
-                    <th>负责人</th>
-                    <th style={{ width: 56 }}>后端</th>
-                    <th style={{ width: 56 }}>前端</th>
-                    <th style={{ width: 90 }}>状态</th>
-                    <th style={{ width: 70 }}>阻塞</th>
-                    <th style={{ width: "30%" }}>阻塞点与阻塞方</th>
-                    <th style={{ width: "22%" }}>介入建议</th>
-                    {canEdit && <th style={{ width: 40 }}></th>}
+                    <th style={{ width: "22%" }}>小模块</th>
+                    <th style={{ width: 52, textAlign: "center" }}>后端</th>
+                    <th style={{ width: 52, textAlign: "center" }}>前端</th>
+                    <th style={{ width: 52, textAlign: "center" }}>完成</th>
+                    <th style={{ width: 64 }}>阻塞？</th>
+                    <th style={{ width: "17%" }}>阻塞模块</th>
+                    <th style={{ width: "11%" }}>阻塞方负责人</th>
+                    <th style={{ width: "17%" }}>阻塞方进展（RFC/PR/合入）</th>
+                    <th>我们可否部分介入</th>
+                    {canEdit && <th style={{ width: 36 }}></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -152,7 +158,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
                       task={task}
                       blocker={blockerByModule.get(task.moduleId)}
                       canEdit={canEdit}
-                      onSaved={() => load()}
+                      onSaved={load}
                     />
                   ))}
                 </tbody>
@@ -161,6 +167,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
           </section>
         );
       })}
+      {groups.length === 0 && <section className="panel"><div className="empty-state"><h2>没有匹配的任务</h2><p>调整成员或筛选条件后重试。</p></div></section>}
     </>
   );
 }
@@ -170,14 +177,18 @@ function MatrixRow({ task, blocker, canEdit, onSaved }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [blocked, setBlocked] = useState<string>(blocker?.blocked === null || blocker === undefined ? "" : blocker.blocked ? "yes" : "no");
-  const [note, setNote] = useState(blocker?.blockerNote ?? "");
-  const [action, setAction] = useState(blocker?.actionNote ?? "");
+  const [blocked, setBlocked] = useState(blocker?.blocked === true ? "yes" : blocker?.blocked === false ? "no" : "");
+  const [blockerModule, setBlockerModule] = useState(blocker?.blockerModule ?? "");
+  const [blockerOwner, setBlockerOwner] = useState(blocker?.blockerOwner ?? "");
+  const [blockerProgress, setBlockerProgress] = useState(blocker?.blockerProgress ?? "");
+  const [engageNote, setEngageNote] = useState(blocker?.engageNote ?? "");
 
   useEffect(() => {
-    setBlocked(blocker?.blocked === null || blocker === undefined ? "" : blocker.blocked ? "yes" : "no");
-    setNote(blocker?.blockerNote ?? "");
-    setAction(blocker?.actionNote ?? "");
+    setBlocked(blocker?.blocked === true ? "yes" : blocker?.blocked === false ? "no" : "");
+    setBlockerModule(blocker?.blockerModule ?? "");
+    setBlockerOwner(blocker?.blockerOwner ?? "");
+    setBlockerProgress(blocker?.blockerProgress ?? "");
+    setEngageNote(blocker?.engageNote ?? "");
   }, [blocker]);
 
   async function save() {
@@ -185,7 +196,11 @@ function MatrixRow({ task, blocker, canEdit, onSaved }: {
     try {
       await api("/progress/blocker", {
         method: "POST",
-        body: JSON.stringify({ moduleId: task.moduleId, blocked: blocked === "" ? null : blocked === "yes", blockerNote: note, actionNote: action })
+        body: JSON.stringify({
+          moduleId: task.moduleId,
+          blocked: blocked === "" ? null : blocked === "yes",
+          blockerModule, blockerOwner, blockerProgress, engageNote
+        })
       });
       setEditing(false);
       onSaved();
@@ -196,17 +211,20 @@ function MatrixRow({ task, blocker, canEdit, onSaved }: {
 
   const feDeclared = task.frontendPending || task.sub.frontend || task.sub.openFrontend;
   const beDeclared = task.sub.backend || task.sub.openBackend || task.codeMerged > 0 || task.codeOpen > 0;
+  const blockChip = blocker === undefined || blocker.blocked === null
+    ? <span className="block-chip unset">未标注</span>
+    : blocker.blocked ? <span className="block-chip yes">是</span>
+      : <span className="block-chip no">否</span>;
 
   return (
     <tr className="matrix-row">
       <td>
         <strong>{task.name}</strong>
-        <small>{task.key}{task.frontendPending && <em className="fe-pending">前端未动</em>}</small>
+        <small>{task.key} · {task.ownerName ?? "未分配"}{task.frontendPending && task.state !== "not_started" && task.state !== "designing" && <em className="fe-pending">前端未动</em>}</small>
       </td>
-      <td>{task.ownerName ?? <small>未分配</small>}</td>
-      <td><DeliveryCell merged={task.sub.backend} open={task.sub.openBackend} declared={beDeclared} title="后端" /></td>
-      <td><DeliveryCell merged={task.sub.frontend} open={task.sub.openFrontend} declared={feDeclared} title="前端" /></td>
-      <td><span className={`badge ${STATE_BADGE[task.state]}`}>{STATE_LABELS[task.state]}</span></td>
+      <td style={{ textAlign: "center" }}><DeliveryCell merged={task.sub.backend} open={task.sub.openBackend} declared={beDeclared} title="后端" /></td>
+      <td style={{ textAlign: "center" }}><DeliveryCell merged={task.sub.frontend} open={task.sub.openFrontend} declared={feDeclared} title="前端" /></td>
+      <td style={{ textAlign: "center" }}><DoneCell state={task.state} /></td>
       {editing && canEdit ? (
         <>
           <td>
@@ -216,29 +234,29 @@ function MatrixRow({ task, blocker, canEdit, onSaved }: {
               <option value="no">否</option>
             </select>
           </td>
-          <td><textarea rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="阻塞点、阻塞方与进展" /></td>
-          <td><textarea rows={2} value={action} onChange={(event) => setAction(event.target.value)} placeholder="可否部分介入与建议" /></td>
-          <td>
-            <div className="row-actions">
-              <button className="small-button" disabled={busy} onClick={() => void save()}>{busy ? "…" : "存"}</button>
-              <button className="small-button" onClick={() => setEditing(false)}>取消</button>
-            </div>
-          </td>
+          <td><textarea rows={2} value={blockerModule} onChange={(event) => setBlockerModule(event.target.value)} placeholder="卡住这项工作的是什么" /></td>
+          <td><input value={blockerOwner} onChange={(event) => setBlockerOwner(event.target.value)} placeholder="谁负责解锁" /></td>
+          <td><textarea rows={2} value={blockerProgress} onChange={(event) => setBlockerProgress(event.target.value)} placeholder="对方的 RFC/PR/合入进展" /></td>
+          <td><textarea rows={2} value={engageNote} onChange={(event) => setEngageNote(event.target.value)} placeholder="可以 / 有限 / 部分 / 否，加一句说明" /></td>
+          {canEdit && (
+            <td>
+              <div className="row-actions">
+                <button className="small-button" disabled={busy} onClick={() => void save()}>{busy ? "…" : "存"}</button>
+                <button className="small-button" onClick={() => setEditing(false)}>取消</button>
+              </div>
+            </td>
+          )}
         </>
       ) : (
         <>
-          <td>
-            {blocker === undefined ? (
-              <span className="block-chip unset">未标注</span>
-            ) : blocker.blocked === true ? <span className="block-chip yes">阻塞</span>
-              : blocker.blocked === false ? <span className="block-chip no">否</span>
-                : <span className="block-chip unset">未标注</span>}
-          </td>
-          <td className="matrix-note">{blocker?.blockerNote || <small>—</small>}</td>
-          <td className="matrix-note">{blocker?.actionNote || <small>—</small>}</td>
+          <td>{blockChip}</td>
+          <td className="matrix-note">{blocker?.blockerModule || <small>—</small>}</td>
+          <td className="matrix-note">{blocker?.blockerOwner || <small>—</small>}</td>
+          <td className="matrix-note">{blocker?.blockerProgress || <small>—</small>}</td>
+          <td className="matrix-note">{blocker?.engageNote || <small>—</small>}</td>
           {canEdit && (
-            <td>
-              <button className="icon-button" title="编辑阻塞标注" onClick={() => setEditing(true)}><Pencil size={13} /></button>
+            <td title={PAGE_SIZE_NOTE}>
+              <button className="icon-button" onClick={() => setEditing(true)}><Pencil size={13} /></button>
             </td>
           )}
         </>
@@ -246,3 +264,4 @@ function MatrixRow({ task, blocker, canEdit, onSaved }: {
     </tr>
   );
 }
+

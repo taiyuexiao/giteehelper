@@ -925,14 +925,24 @@ router.get("/progress/blockers", requireAuth, (_req, res) => {
 });
 
 router.post("/progress/blocker", requireAuth, requireRole("admin", "maintainer"), (req, res) => {
-  const body = (req.body ?? {}) as { moduleId?: number; blocked?: boolean | null; blockerNote?: string; actionNote?: string };
+  const body = (req.body ?? {}) as {
+    moduleId?: number; blocked?: boolean | null;
+    blockerModule?: string; blockerOwner?: string; blockerProgress?: string; engageNote?: string;
+  };
   if (!Number(body.moduleId)) {
     res.status(400).json({ error: "moduleId 必填" });
     return;
   }
   const blocked = body.blocked === null || body.blocked === undefined ? null : Boolean(body.blocked);
-  res.json(upsertBlocker(1, Number(body.moduleId), blocked, String(body.blockerNote ?? ""), String(body.actionNote ?? ""), actor(req)?.username ?? "system"));
-  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "blocker_update", "module", Number(body.moduleId), { blocked });
+  const input = {
+    blocked,
+    blockerModule: String(body.blockerModule ?? ""),
+    blockerOwner: String(body.blockerOwner ?? ""),
+    blockerProgress: String(body.blockerProgress ?? ""),
+    engageNote: String(body.engageNote ?? "")
+  };
+  res.json(upsertBlocker(1, Number(body.moduleId), input, actor(req)?.username ?? "system"));
+  audit(actor(req)?.id ?? null, actor(req)?.username ?? "system", "blocker_update", "module", Number(body.moduleId), { blocked: input.blocked });
 });
 
 router.post("/progress/confirm-association", requireAuth, requireAdmin, (req, res) => {
