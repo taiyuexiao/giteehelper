@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pencil, Search } from "lucide-react";
 import { api } from "../api";
 import { Loading } from "../components";
@@ -43,8 +43,10 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
   const [onlyOpen, setOnlyOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
   const canEdit = user.role === "admin" || user.role === "maintainer";
+  const [busy, setBusy] = useState(false);
 
-  const load = () => {
+  const load = useCallback(() => {
+    setBusy(true);
     Promise.all([
       api<{ groups: Array<{ name: string; ownerNames: string[]; tasks: Array<MatrixTask & { group?: string }> }> }>("/progress/board"),
       api<Blocker[]>("/progress/blockers")
@@ -53,8 +55,14 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
       setBlockers(blockerData);
       setError("");
     }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // WebHook 落库后矩阵数据即新：每 60 秒自动重取，挂着页面就能看到 PR 提交/合并的实时变化
+  useEffect(() => {
+    const timer = window.setInterval(load, 60_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
   const blockerByModule = useMemo(() => new Map(blockers.map((item) => [item.moduleId, item])), [blockers]);
 
@@ -101,6 +109,9 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
           </label>
           <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索任务 / 编号" /></label>
           <small className="delivery-legend">交付列：✅ 已合并 · 🟡 在飞 · ❌ 未动 · — 无此面</small>
+          <button className="secondary-button" style={{ marginLeft: "auto" }} onClick={load} disabled={busy}>
+            {busy ? "刷新中…" : "刷新"}
+          </button>
         </div>
       </section>
 
