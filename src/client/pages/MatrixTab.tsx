@@ -1,30 +1,52 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Maximize2, Pencil, Plus, Search, X } from "lucide-react";
+import { Download, Maximize2, Pencil, Plus, RotateCcw, Search, X } from "lucide-react";
 import { api } from "../api";
 import { Loading, Modal } from "../components";
 
 /**
- * 责任矩阵 v2：交付项粒度（对齐负责人的交付表）——
+ * 责任矩阵：全景策展模式——
  * 大模块 | 小模块 | 后端 | 前端 | 完成 | 阻塞？ | 阻塞模块 | 阻塞方负责人 | 阻塞方进展 | 我们可否部分介入
- * PR 号（!399）自动解析出状态、交付面与可点链接；阻塞字段人工维护。
+ * 基线由「全景模板」（src/server/matrixTemplate.ts 手工策展）一键导入（merge 补缺 / replace 重建），
+ * 落库后完全人工维护；PR 号（!399）自动解析出状态、交付面与可点 chip（含标题/合并日期的悬停提示）。
  */
 
-type PrInfo = { number: number; state: string; url: string | null; backend: boolean; frontend: boolean; sync: boolean };
+type PrInfo = {
+  number: number; state: string; url: string | null; title: string; mergedAt: string | null;
+  backend: boolean; frontend: boolean; sync: boolean;
+};
 type Row = {
   id: number; groupName: string; itemName: string; owner: string; prNumbers: string;
   prs: PrInfo[];
   blocked: boolean | null;
   blockerModule: string; blockerOwner: string; blockerProgress: string; engageNote: string;
+  statusNote: string;
   updatedBy: string | null; updatedAt: string;
 };
 
-const prLink = (pr: PrInfo) => (
-  pr.url
-    ? <a key={pr.number} className="pr-link" href={pr.url} target="_blank" rel="noreferrer">!{pr.number}</a>
-    : <span key={pr.number} className="pr-link plain">!{pr.number}</span>
-);
+const PR_STATE_LABEL: Record<string, string> = { merged: "已合并", open: "在审", closed: "已关闭", unknown: "未同步" };
 
-/** 交付面/完成列：符号 + 可点 PR 号 */
+function prStateClass(state: string): string {
+  if (state === "merged") return "state-merged";
+  if (state === "open") return "state-open";
+  if (state === "closed") return "state-closed";
+  return "state-unknown";
+}
+
+/** PR 状态徽章 chip：颜色随状态，悬停显示标题/状态/合并日期，点击新窗口直达 Gitee */
+function prChip(pr: PrInfo) {
+  const label = PR_STATE_LABEL[pr.state] ?? PR_STATE_LABEL.unknown;
+  const tooltip = [
+    pr.title || `PR !${pr.number}`,
+    label,
+    pr.state === "merged" && pr.mergedAt ? `合并于 ${pr.mergedAt.slice(0, 10)}` : ""
+  ].filter(Boolean).join(" · ");
+  const className = `pr-chip ${prStateClass(pr.state)}`;
+  return pr.url
+    ? <a key={pr.number} className={className} href={pr.url} target="_blank" rel="noreferrer" title={tooltip}>!{pr.number}</a>
+    : <span key={pr.number} className={`${className} plain`} title={tooltip}>!{pr.number}</span>;
+}
+
+/** 交付面/完成列：符号 + 全部相关 PR chip（自动换行，不截断） */
 function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: PrInfo[] }) {
   const relevant = prs.filter((pr) => !pr.sync && (kind === "done" || (kind === "backend" ? pr.backend : pr.frontend)));
   const merged = relevant.filter((pr) => pr.state === "merged");
@@ -33,8 +55,7 @@ function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: P
     return (
       <span className="mark-cell">
         <span className="delivery yes">✅</span>
-        {merged.slice(0, 3).map(prLink)}
-        {merged.length > 3 && <small>+{merged.length - 3}</small>}
+        {merged.map(prChip)}
       </span>
     );
   }
@@ -42,8 +63,16 @@ function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: P
     return (
       <span className="mark-cell">
         <span className="delivery wip">🟡</span>
-        {open.slice(0, 3).map(prLink)}
-        {open.length > 3 && <small>+{open.length - 3}</small>}
+        {open.map(prChip)}
+      </span>
+    );
+  }
+  if (relevant.length) {
+    // 有 PR 但都已关闭/未同步：仍把 chip 摆出来让人看到
+    return (
+      <span className="mark-cell">
+        <span className="delivery no">❌</span>
+        {relevant.map(prChip)}
       </span>
     );
   }
@@ -64,21 +93,27 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
   const load = useCallback(() => {
     setBusy(true);
     api<Row[]>("/progress/matrix-rows").then((data) => {
-      if (data.length === 0 && canEdit) {
-        // 空表时自动初始化（BOSC 任务 → 交付项行），之后完全人工维护
-        api("/progress/matrix-init", { method: "POST", body: JSON.stringify({}) })
-          .then(() => api<Row[]>("/progress/matrix-rows"))
-          .then((rows2) => setRows(rows2));
-      } else {
-        setRows(data);
-      }
+      setRows(data);
       setError("");
     }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, [canEdit]);
+  }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
+  }, [load]);
+
+  const importTemplate = useCallback((mode: "merge" | "replace") => {
+    if (mode === "replace" && !window.confirm("将清空当前全部责任矩阵行并按全景模板重建，人工修改会丢失。确定？")) return;
+    api<{ created: number; replaced: boolean }>("/progress/matrix-template", { method: "POST", body: JSON.stringify({ mode }) })
+      .then(() => load())
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, [load]);
+
+  const initFromBoard = useCallback(() => {
+    api("/progress/matrix-init", { method: "POST", body: JSON.stringify({}) })
+      .then(() => load())
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [load]);
 
   const people = useMemo(() => {
@@ -116,7 +151,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
             <small>{list.length} 个交付项{list.some((row) => row.owner) ? ` · 负责人 ${[...new Set(list.map((row) => row.owner).filter(Boolean))].join(" · ")}` : ""}</small>
           </div>
           {canEdit && !compact && (
-            <button className="secondary-button" onClick={() => setEditing({ groupName, itemName: "", owner: "", prNumbers: "", blockerModule: "", blockerOwner: "", blockerProgress: "", engageNote: "" })}>
+            <button className="secondary-button" onClick={() => setEditing({ groupName, itemName: "", owner: "", prNumbers: "", blockerModule: "", blockerOwner: "", blockerProgress: "", engageNote: "", statusNote: "" })}>
               <Plus size={14} />添加交付项
             </button>
           )}
@@ -146,7 +181,10 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
                   </td>
                   <td className="col-mark"><MarkCell kind="backend" prs={row.prs} /></td>
                   <td className="col-mark"><MarkCell kind="frontend" prs={row.prs} /></td>
-                  <td className="col-mark"><MarkCell kind="done" prs={row.prs} /></td>
+                  <td className="col-mark">
+                    <MarkCell kind="done" prs={row.prs} />
+                    {row.statusNote && <small className="status-note">{row.statusNote}</small>}
+                  </td>
                   <td className="col-blocked">
                     {row.blocked === true ? <span className="block-chip yes">是</span>
                       : row.blocked === false ? <span className="block-chip no">否</span>
@@ -188,8 +226,14 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
             隐藏已完成
           </label>
           <label className="stream-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索交付项 / 大模块" /></label>
-          <small className="delivery-legend">✅ 已合并 · 🟡 在审在飞 · ❌ 未动（符号旁 !NN 点击直达 PR）</small>
+          <small className="delivery-legend">✅/绿 已合并 · 🟡/蓝 在审 · 灰 已关闭或未同步（chip 点击直达 PR，悬停看标题与合并日期）</small>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {canEdit && (
+              <>
+                <button className="secondary-button" onClick={() => importTemplate("merge")} title="按全景模板补齐缺失的交付项行，不动已有人工修改"><Download size={14} />导入全景模板</button>
+                <button className="secondary-button" onClick={() => importTemplate("replace")} title="清空全部矩阵行后按全景模板重建"><RotateCcw size={14} />重置为模板</button>
+              </>
+            )}
             <button className="secondary-button" onClick={() => setFullscreen(true)}><Maximize2 size={14} />全屏</button>
             <button className="secondary-button" onClick={load} disabled={busy}>{busy ? "刷新中…" : "刷新"}</button>
           </div>
@@ -198,7 +242,22 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
 
       {table(false)}
 
-      {groups.length === 0 && (
+      {rows && rows.length === 0 && (
+        <section className="panel">
+          <div className="empty-state">
+            <h2>责任矩阵还没有内容</h2>
+            <p>导入全景模板（按大模块→交付项策展的基线，PR 状态自动解析），或从看板任务初始化骨架。</p>
+            {canEdit && (
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
+                <button className="primary-button" onClick={() => importTemplate("merge")}><Download size={14} />导入全景模板</button>
+                <button className="secondary-button" onClick={initFromBoard}>从看板任务初始化</button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {rows && rows.length > 0 && groups.length === 0 && (
         <section className="panel"><div className="empty-state"><h2>没有匹配的交付项</h2><p>调整成员或筛选条件后重试。</p></div></section>
       )}
 
@@ -224,6 +283,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
             <label className="full">阻塞模块<input value={editing.blockerModule ?? ""} onChange={(e) => setEditing({ ...editing, blockerModule: e.target.value })} placeholder="卡住这项工作的是什么" /></label>
             <label className="full">阻塞方进展（RFC/PR/合入）<textarea value={editing.blockerProgress ?? ""} onChange={(e) => setEditing({ ...editing, blockerProgress: e.target.value })} rows={2} /></label>
             <label className="full">我们可否部分介入<textarea value={editing.engageNote ?? ""} onChange={(e) => setEditing({ ...editing, engageNote: e.target.value })} rows={2} placeholder="可以 / 有限 / 部分 / 否 + 说明" /></label>
+            <label className="full">完成备注<input value={editing.statusNote ?? ""} onChange={(e) => setEditing({ ...editing, statusNote: e.target.value })} placeholder="完成列下方的一行说明（如 主体在 main；面板在审）" /></label>
           </div>
           <div className="modal-actions">
             {editing.id && (
