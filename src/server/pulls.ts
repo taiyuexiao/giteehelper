@@ -535,13 +535,23 @@ export interface PullCommentRecord {
   url: string | null;
 }
 
+/**
+ * 评论正文字符上限。线上 684 条评审长文曾被 2000 的上限截断，
+ * 截断处落在 reviewed_head_sha 之后的阻塞项清单上，知识库与时间线都读不全。
+ */
+const COMMENT_BODY_LIMIT = 20000;
+
+function clampCommentBody(body: unknown): string {
+  return String(body ?? "").slice(0, COMMENT_BODY_LIMIT);
+}
+
 function mapComment(number: number, raw: Record<string, unknown>, source: "issue" | "pull"): PullCommentRecord {
   const user = (raw.user ?? {}) as Record<string, unknown>;
   return {
     remoteId: Number(raw.id ?? 0) || null,
     pullNumber: number,
     source,
-    body: String(raw.body ?? "").slice(0, 2000),
+    body: clampCommentBody(raw.body),
     authorLogin: typeof user.login === "string" ? user.login : null,
     authorName: typeof user.name === "string" ? user.name : null,
     createdAt: typeof raw.created_at === "string" ? raw.created_at : null,
@@ -582,11 +592,16 @@ function saveComment(projectId: number, comment: PullCommentRecord) {
   );
 }
 
-/** 分块回填评论：每次最多 max 个 PR，返回 remaining 供循环 */
+/**
+ * 分块回填评论：每次最多 max 个 PR。
+ * nextCursor 为 0 表示已扫到底；调用方按 `beforeNumber = nextCursor` 继续调用即可扫完全仓，
+ * 且不会因「一直没有评论的 PR」原地打转（游标一律向前推进）。
+ * refresh=true 时不跳过已抓过的 PR，用于修复历史截断与抓取被编辑的评论。
+ */
 export async function backfillPullComments(
-  options: { max?: number } = {},
+  options: { max?: number; beforeNumber?: number; refresh?: boolean } = {},
   projectId = 1
-): Promise<{ pulls: number; comments: number; remaining: number }> {
+): Promise<{ pulls: number; comments: number; remaining: number; nextCursor: number }> {
   const max = Math.max(1, Math.min(options.max ?? 40, 200));
   if (!config.giteeRepo || !config.giteeToken) throw new Error("GITEE_TOKEN 与 GITEE_REPO 未配置");
   const done = new Set<number>(
@@ -594,10 +609,13 @@ export async function backfillPullComments(
       `SELECT DISTINCT pull_number AS pullNumber FROM pull_comments WHERE project_id = ?`, [projectId]
     ).map((row) => row.pullNumber)
   );
+  const before = Number(options.beforeNumber ?? 0) || Number.MAX_SAFE_INTEGER;
   const candidates = queryAll<{ number: number }>(
-    `SELECT number FROM pull_requests WHERE project_id = ? ORDER BY number DESC`, [projectId]
+    `SELECT number FROM pull_requests WHERE project_id = ? AND number < ? ORDER BY number DESC`,
+    [projectId, before]
   ).map((row) => row.number);
-  const targets = candidates.filter((number) => !done.has(number)).slice(0, max);
+  const pool = options.refresh ? candidates : candidates.filter((number) => !done.has(number));
+  const targets = pool.slice(0, max);
   let comments = 0;
   for (const number of targets) {
     const records = await fetchPullCommentRecords(number).catch(() => [] as PullCommentRecord[]);
@@ -606,38 +624,73 @@ export async function backfillPullComments(
       comments += 1;
     }
   }
-  return { pulls: targets.length, comments, remaining: Math.max(candidates.filter((n) => !done.has(n)).length - targets.length, 0) };
+  return {
+    pulls: targets.length,
+    comments,
+    remaining: pool.length - targets.length,
+    nextCursor: targets.length ? Math.min(...targets) : 0
+  };
 }
 
-/** WebHook note 事件增量落评论（PR 会话评论）；pull_number 靠 noteable_id 反查 */
+/** 线上载荷里评论对象在 `comment`；旧版载荷里 `note` 才是对象。取不到对象如实返回 null。 */
+function pickCommentObject(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const comment = payload.comment;
+  if (comment && typeof comment === "object") return comment as Record<string, unknown>;
+  const note = payload.note;
+  if (note && typeof note === "object") return note as Record<string, unknown>;
+  return null;
+}
+
+/** PR 编号优先直读载荷，读不到才用 noteable_id（= PR 的 Gitee 内部 id）反查。 */
+function resolvePullNumber(projectId: number, payload: Record<string, unknown>): number {
+  const pull = (payload.pull_request ?? {}) as Record<string, unknown>;
+  const direct = Number(pull.number ?? payload.number ?? payload.iid ?? 0) || 0;
+  if (direct) return direct;
+  const noteableId = Number(payload.noteable_id ?? 0) || 0;
+  if (!noteableId) return 0;
+  return Number(
+    queryOne<{ number: number }>(
+      `SELECT number FROM pull_requests WHERE project_id = ? AND remote_id = ?`,
+      [projectId, noteableId]
+    )?.number ?? 0
+  );
+}
+
+/**
+ * WebHook note 事件增量落评论（PR 会话评论）。
+ * 载荷形状以 2026-10-03 线上实测为准：评论对象在 `payload.comment`，
+ * `payload.note` 是正文字符串——旧实现读 `payload.note.id` 恒为 0，
+ * 评论实时通道从未生效，只能靠手动回填。
+ * 与回填通道按 (project, pr, remote_id) 跨 source 去重，同一条评论只保留一行。
+ */
 export function upsertPullCommentFromWebhook(projectId: number, payload: Record<string, unknown>) {
-  const note = (payload.note ?? {}) as Record<string, unknown>;
-  const noteId = Number(note.id ?? 0) || 0;
+  const comment = pickCommentObject(payload);
+  const noteId = Number(comment?.id ?? 0) || 0;
   if (!noteId) return null;
-  let number = Number(payload.number ?? payload.iid ?? 0) || 0;
-  if (!number) {
-    const noteableId = Number(payload.noteable_id ?? 0) || 0;
-    if (noteableId) {
-      number = Number(
-        queryOne<{ number: number }>(
-          `SELECT number FROM pull_requests WHERE project_id = ? AND remote_id = ?`,
-          [projectId, noteableId]
-        )?.number ?? 0
-      );
-    }
-  }
+  const number = resolvePullNumber(projectId, payload);
   if (!number) return null;
-  const user = (note.user ?? {}) as Record<string, unknown>;
+  const user = (comment?.user ?? {}) as Record<string, unknown>;
   const record: PullCommentRecord = {
     remoteId: noteId,
     pullNumber: number,
     source: "webhook",
-    body: String(note.body ?? "").slice(0, 2000),
+    body: clampCommentBody(comment?.body),
     authorLogin: typeof user.login === "string" ? user.login : null,
     authorName: typeof user.name === "string" ? user.name : null,
-    createdAt: typeof note.created_at === "string" ? note.created_at : null,
-    url: typeof note.html_url === "string" ? note.html_url : null
+    createdAt: typeof comment?.created_at === "string" ? comment.created_at : null,
+    url: typeof comment?.html_url === "string" ? comment.html_url : null
   };
+  const existing = queryOne<{ id: number; source: string }>(
+    `SELECT id, source FROM pull_comments WHERE project_id = ? AND pull_number = ? AND remote_id = ? LIMIT 1`,
+    [projectId, record.pullNumber, record.remoteId]
+  );
+  if (existing) {
+    execute(
+      `UPDATE pull_comments SET body = ?, author_login = ?, author_name = ?, created_at = ?, url = ? WHERE id = ?`,
+      [record.body, record.authorLogin, record.authorName, record.createdAt, record.url, existing.id]
+    );
+    return { ...record, source: existing.source as PullCommentRecord["source"] };
+  }
   execute(
     `INSERT INTO pull_comments (project_id, pull_number, remote_id, source, body, author_login, author_name, created_at, url)
      VALUES (?, ?, ?, 'webhook', ?, ?, ?, ?, ?)

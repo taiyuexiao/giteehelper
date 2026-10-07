@@ -1011,10 +1011,14 @@ router.post("/progress/dismiss-association", requireAuth, requireAdmin, (req, re
 });
 
 router.post("/progress/backfill-comments", requireAuth, requireAdmin, async (req, res) => {
-  // 分块执行：每次最多 max 个 PR 的评论，调用方循环到 remaining 为 0
-  const max = Math.min(Number((req.body as Record<string, unknown> | undefined)?.max) || 40, 200);
+  // 分块执行：每次最多 max 个 PR；带 beforeNumber 逐段向下扫（nextCursor 为 0 表示扫完），
+  // refresh=true 时不跳过已抓过的 PR（修历史截断/被编辑的评论）
+  const body = (req.body as Record<string, unknown> | undefined) ?? {};
+  const max = Math.min(Number(body.max) || 40, 200);
+  const beforeNumber = Number(body.beforeNumber) || undefined;
+  const refresh = body.refresh === true;
   try {
-    res.json(await backfillPullComments({ max }));
+    res.json(await backfillPullComments({ max, beforeNumber, refresh }));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "comment backfill failed" });
   }
