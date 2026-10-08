@@ -965,15 +965,55 @@ a.pr-chip:hover { filter: brightness(0.94); }
 .matrix-edit input, .matrix-edit textarea, .matrix-edit select { font-size: 13px; padding: 7px 9px; border: 1px solid #d5dee2; border-radius: 8px; }
 
 /* 责任矩阵 · 单表版（对齐对话里的表格形态：大模块合并列、符号单元格、横向滚动） */
-.matrix-one { min-width: 1560px; }
-.matrix-one .col-group {
-  min-width: 130px; max-width: 180px; font-weight: 700; font-size: 12.5px; line-height: 1.5;
-  background: #f2f7fa; color: #33454f; border-right: 2px solid #dbe6ec; vertical-align: top;
+.matrix-one { min-width: 1580px; border-collapse: separate; border-spacing: 0; }
+.matrix-one th {
+  position: sticky; top: 0; z-index: 3; background: #f6fafc; color: #5d7280;
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; padding: 9px 10px;
+  border-bottom: 2px solid #dbe6ec; text-align: left; white-space: nowrap;
 }
-.matrix-one .col-item { min-width: 240px; }
-.matrix-one .col-owner2 { min-width: 88px; }
-.matrix-one .col-pr { min-width: 150px; white-space: nowrap; }
-.matrix-one .col-done { min-width: 150px; }
-.matrix-one .face-symbol { font-size: 14px; }
-.matrix-one .status-inline { margin-left: 6px; font-size: 11px; color: #8fa2ab; white-space: normal; }
-.matrix-one td.col-mark { text-align: center; width: 52px; }
+.matrix-one td { font-size: 13px; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid #eef3f5; }
+.matrix-one .matrix-row:hover td { background: #f7fbfd; }
+.matrix-one .group-start td { border-top: 2px solid #dbe6ec; }
+.matrix-one .col-item { min-width: 250px; }
+.matrix-one .col-item strong { font-size: 12.8px; line-height: 1.5; }
+.matrix-one .col-owner2 { min-width: 96px; white-space: nowrap; }
+.matrix-one .col-pr { min-width: 152px; white-space: nowrap; }
+.matrix-one .col-done { min-width: 160px; }
+.matrix-one .col-note { min-width: 170px; }
+.matrix-one td.col-mark { text-align: center; width: 54px; }
+.matrix-one .col-op { width: 36px; }
+
+/* 大模块合并列：左侧色条 + 浅底，按组哈希取 8 色 */
+.matrix-one .col-group {
+  min-width: 132px; max-width: 190px; vertical-align: top;
+  font-weight: 700; font-size: 12.5px; line-height: 1.55; color: #33454f;
+  border-right: 2px solid #dbe6ec;
+}
+.matrix-one .col-group span { display: block; padding-left: 8px; border-left: 4px solid transparent; }
+.matrix-one .gh-0 span { border-left-color: #2f7fa8; background: #eef6fa; }
+.matrix-one .gh-1 span { border-left-color: #7c6bc4; background: #f2f0fa; }
+.matrix-one .gh-2 span { border-left-color: #2e7d4f; background: #ecf5ef; }
+.matrix-one .gh-3 span { border-left-color: #b07830; background: #faf3e8; }
+.matrix-one .gh-4 span { border-left-color: #c0507a; background: #faeef3; }
+.matrix-one .gh-5 span { border-left-color: #4f9aa8; background: #ebf6f7; }
+.matrix-one .gh-6 span { border-left-color: #6b7f88; background: #f0f4f5; }
+.matrix-one .gh-7 span { border-left-color: #8a6cc9; background: #f3f0fb; }
+.matrix-one .gh-0, .matrix-one .gh-1, .matrix-one .gh-2, .matrix-one .gh-3,
+.matrix-one .gh-4, .matrix-one .gh-5, .matrix-one .gh-6, .matrix-one .gh-7 { padding-left: 0; padding-right: 10px; }
+
+/* 符号单元格着色 */
+.sym { font-size: 14px; font-weight: 700; }
+.sym-ok { color: #2e7d4f; }
+.sym-wip { color: #2f7fa8; }
+.sym-no { color: #d04545; }
+.sym-na { color: #b7c4ca; font-weight: 400; }
+.matrix-one .status-inline { margin-left: 6px; font-size: 11px; color: #8fa2ab; white-space: normal; line-height: 1.45; }
+.matrix-one .muted { color: #b7c4ca; }
+
+/* 负责人小胶囊 */
+.owner-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #445c68; }
+.owner-pill i {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; background: #e3f0f6; color: #2f7fa8;
+  font-size: 10.5px; font-style: normal; font-weight: 700;
+}

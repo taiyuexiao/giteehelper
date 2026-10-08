@@ -130,6 +130,19 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
 
   if (!rows && !error) return <Loading />;
 
+  /** 符号单元格：按状态着色（✅绿 / 🟡蓝 / ❌红 / — 浅灰） */
+  function Sym({ s }: { s: string }) {
+    const cls = s === "✅" ? "ok" : s === "🟡" ? "wip" : s === "❌" ? "no" : "na";
+    return <span className={`sym sym-${cls}`}>{s}</span>;
+  }
+
+  /** 大模块列的配色：按组名哈希取 8 色之一，同一组同色 */
+  function hashGroup(name: string): number {
+    let h = 0;
+    for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) % 997;
+    return h % 8;
+  }
+
   /** 后端/前端列：只要符号（✅ 已合并 / 🟡 在审 / ❌ 未动 / — 不涉及），与对话里的表一致 */
   function faceSymbol(prs: PrInfo[], face: "backend" | "frontend"): string {
     const relevant = prs.filter((pr) => !pr.sync && (face === "backend" ? pr.backend : pr.frontend));
@@ -184,19 +197,23 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
           </thead>
           <tbody>
             {flat.map(({ row, group, first, span }) => (
-              <tr key={row.id} className="matrix-row">
-                {first && <td className="col-group" rowSpan={span}>{group}</td>}
+              <tr key={row.id} className={first ? "matrix-row group-start" : "matrix-row"}>
+                {first && <td className={`col-group gh-${hashGroup(group)}`} rowSpan={span}><span>{group}</span></td>}
                 <td className="col-item"><strong>{row.itemName}</strong></td>
-                <td className="col-owner2 matrix-note">{row.owner || <small>—</small>}</td>
+                <td className="col-owner2 matrix-note">
+                  {row.owner
+                    ? <span className="owner-pill"><i>{row.owner.slice(0, 1)}</i>{row.owner}</span>
+                    : <small>—</small>}
+                </td>
                 <td className="col-pr">
                   {row.prs.some((pr) => !pr.sync)
                     ? <span className="mark-cell">{chipList(row.prs.filter((pr) => !pr.sync))}</span>
-                    : <small>—</small>}
+                    : <small className="muted">—</small>}
                 </td>
-                <td className="col-mark"><span className="face-symbol">{faceSymbol(row.prs, "backend")}</span></td>
-                <td className="col-mark"><span className="face-symbol">{faceSymbol(row.prs, "frontend")}</span></td>
+                <td className="col-mark"><Sym s={faceSymbol(row.prs, "backend")} /></td>
+                <td className="col-mark"><Sym s={faceSymbol(row.prs, "frontend")} /></td>
                 <td className="col-done">
-                  <span className="face-symbol">{doneSymbol(row)}</span>
+                  <Sym s={doneSymbol(row)} />
                   {row.statusNote && <small className="status-inline">{row.statusNote}</small>}
                 </td>
                 <td className="col-blocked">
