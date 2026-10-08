@@ -46,16 +46,37 @@ function prChip(pr: PrInfo) {
     : <span key={pr.number} className={`${className} plain`} title={tooltip}>!{pr.number}</span>;
 }
 
-/** 交付面/完成列：符号 + 全部相关 PR chip（自动换行，不截断） */
-function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: PrInfo[] }) {
-  const relevant = prs.filter((pr) => !pr.sync && (kind === "done" || (kind === "backend" ? pr.backend : pr.frontend)));
+/** 一格里最多平铺的 chip 数，多余的收成 +N（悬停列出全部），不再竖堆 */
+const MAX_CHIPS = 4;
+
+function chipList(list: PrInfo[]) {
+  const shown = list.slice(0, MAX_CHIPS);
+  const rest = list.slice(MAX_CHIPS);
+  return (
+    <>
+      {shown.map(prChip)}
+      {rest.length > 0 && (
+        <span
+          className="pr-chip more"
+          title={rest.map((pr) => `!${pr.number} ${PR_STATE_LABEL[pr.state] ?? ""} ${pr.title || ""}`.trim()).join("\n")}
+        >
+          +{rest.length}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** 交付面列：符号 + 相关 PR chip（最多 MAX_CHIPS 个，超出 +N 悬停看全部） */
+function MarkCell({ kind, prs }: { kind: "backend" | "frontend"; prs: PrInfo[] }) {
+  const relevant = prs.filter((pr) => !pr.sync && (kind === "backend" ? pr.backend : pr.frontend));
   const merged = relevant.filter((pr) => pr.state === "merged");
   const open = relevant.filter((pr) => pr.state === "open");
   if (merged.length) {
     return (
       <span className="mark-cell">
         <span className="delivery yes">✅</span>
-        {merged.map(prChip)}
+        {chipList(merged)}
       </span>
     );
   }
@@ -63,20 +84,31 @@ function MarkCell({ kind, prs }: { kind: "backend" | "frontend" | "done"; prs: P
     return (
       <span className="mark-cell">
         <span className="delivery wip">🟡</span>
-        {open.map(prChip)}
+        {chipList(open)}
       </span>
     );
   }
   if (relevant.length) {
-    // 有 PR 但都已关闭/未同步：仍把 chip 摆出来让人看到
     return (
       <span className="mark-cell">
         <span className="delivery no">❌</span>
-        {relevant.map(prChip)}
+        {chipList(relevant)}
       </span>
     );
   }
   return <span className="mark-cell"><span className="delivery no">❌</span></span>;
+}
+
+/** 完成列：只放符号与完成备注——chip 已在后端/前端两列，不重复堆 */
+function DoneCell({ row }: { row: Row }) {
+  const relevant = row.prs.filter((pr) => !pr.sync);
+  const symbol = relevant.some((pr) => pr.state === "merged") ? "✅" : relevant.some((pr) => pr.state === "open") ? "🟡" : "❌";
+  return (
+    <span className="mark-cell">
+      <span className={`delivery ${symbol === "✅" ? "yes" : symbol === "🟡" ? "wip" : "no"}`}>{symbol}</span>
+      {row.statusNote && <small className="status-note">{row.statusNote}</small>}
+    </span>
+  );
 }
 
 export default function MatrixTab({ user }: { user: { role: string } }) {
@@ -182,8 +214,7 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
                   <td className="col-mark"><MarkCell kind="backend" prs={row.prs} /></td>
                   <td className="col-mark"><MarkCell kind="frontend" prs={row.prs} /></td>
                   <td className="col-mark">
-                    <MarkCell kind="done" prs={row.prs} />
-                    {row.statusNote && <small className="status-note">{row.statusNote}</small>}
+                    <DoneCell row={row} />
                   </td>
                   <td className="col-blocked">
                     {row.blocked === true ? <span className="block-chip yes">是</span>

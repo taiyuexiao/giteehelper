@@ -954,6 +954,7 @@ a.pr-chip:hover { filter: brightness(0.94); }
 .pr-chip.state-closed { background: #eef2f3; color: #5d7280; }
 .pr-chip.state-unknown { background: transparent; color: #8fa2ab; border: 1px dashed #c3ced3; font-weight: 500; }
 .pr-chip.plain { cursor: default; }
+.pr-chip.more { background: #f0f5f7; color: #5d7280; cursor: default; border-color: #d5dee2; }
 .status-note { display: block; margin-top: 2px; font-size: 11px; color: #8fa2ab; line-height: 1.4; white-space: normal; }
 .block-chip { white-space: nowrap; display: inline-block; }
 .matrix-note { font-size: 12px; color: #445c68; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
