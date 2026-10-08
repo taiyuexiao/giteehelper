@@ -963,3 +963,17 @@ a.pr-chip:hover { filter: brightness(0.94); }
 .matrix-fullscreen .matrix-group-head { padding: 10px 14px 6px; }
 .matrix-edit label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: #5d7280; }
 .matrix-edit input, .matrix-edit textarea, .matrix-edit select { font-size: 13px; padding: 7px 9px; border: 1px solid #d5dee2; border-radius: 8px; }
+
+/* 责任矩阵 · 单表版（对齐对话里的表格形态：大模块合并列、符号单元格、横向滚动） */
+.matrix-one { min-width: 1560px; }
+.matrix-one .col-group {
+  min-width: 130px; max-width: 180px; font-weight: 700; font-size: 12.5px; line-height: 1.5;
+  background: #f2f7fa; color: #33454f; border-right: 2px solid #dbe6ec; vertical-align: top;
+}
+.matrix-one .col-item { min-width: 240px; }
+.matrix-one .col-owner2 { min-width: 88px; }
+.matrix-one .col-pr { min-width: 150px; white-space: nowrap; }
+.matrix-one .col-done { min-width: 150px; }
+.matrix-one .face-symbol { font-size: 14px; }
+.matrix-one .status-inline { margin-left: 6px; font-size: 11px; color: #8fa2ab; white-space: normal; }
+.matrix-one td.col-mark { text-align: center; width: 52px; }

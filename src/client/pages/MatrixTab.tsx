@@ -67,50 +67,6 @@ function chipList(list: PrInfo[]) {
   );
 }
 
-/** 交付面列：符号 + 相关 PR chip（最多 MAX_CHIPS 个，超出 +N 悬停看全部） */
-function MarkCell({ kind, prs }: { kind: "backend" | "frontend"; prs: PrInfo[] }) {
-  const relevant = prs.filter((pr) => !pr.sync && (kind === "backend" ? pr.backend : pr.frontend));
-  const merged = relevant.filter((pr) => pr.state === "merged");
-  const open = relevant.filter((pr) => pr.state === "open");
-  if (merged.length) {
-    return (
-      <span className="mark-cell">
-        <span className="delivery yes">✅</span>
-        {chipList(merged)}
-      </span>
-    );
-  }
-  if (open.length) {
-    return (
-      <span className="mark-cell">
-        <span className="delivery wip">🟡</span>
-        {chipList(open)}
-      </span>
-    );
-  }
-  if (relevant.length) {
-    return (
-      <span className="mark-cell">
-        <span className="delivery no">❌</span>
-        {chipList(relevant)}
-      </span>
-    );
-  }
-  return <span className="mark-cell"><span className="delivery no">❌</span></span>;
-}
-
-/** 完成列：只放符号与完成备注——chip 已在后端/前端两列，不重复堆 */
-function DoneCell({ row }: { row: Row }) {
-  const relevant = row.prs.filter((pr) => !pr.sync);
-  const symbol = relevant.some((pr) => pr.state === "merged") ? "✅" : relevant.some((pr) => pr.state === "open") ? "🟡" : "❌";
-  return (
-    <span className="mark-cell">
-      <span className={`delivery ${symbol === "✅" ? "yes" : symbol === "🟡" ? "wip" : "no"}`}>{symbol}</span>
-      {row.statusNote && <small className="status-note">{row.statusNote}</small>}
-    </span>
-  );
-}
-
 export default function MatrixTab({ user }: { user: { role: string } }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState("");
@@ -174,69 +130,95 @@ export default function MatrixTab({ user }: { user: { role: string } }) {
 
   if (!rows && !error) return <Loading />;
 
+  /** 后端/前端列：只要符号（✅ 已合并 / 🟡 在审 / ❌ 未动 / — 不涉及），与对话里的表一致 */
+  function faceSymbol(prs: PrInfo[], face: "backend" | "frontend"): string {
+    const relevant = prs.filter((pr) => !pr.sync && (face === "backend" ? pr.backend : pr.frontend));
+    if (relevant.some((pr) => pr.state === "merged")) return "✅";
+    if (relevant.some((pr) => pr.state === "open")) return "🟡";
+    if (relevant.length) return "❌";
+    return "—";
+  }
+
+  function doneSymbol(row: Row): string {
+    const relevant = row.prs.filter((pr) => !pr.sync);
+    if (relevant.some((pr) => pr.state === "merged")) return "✅";
+    if (relevant.some((pr) => pr.state === "open")) return "🟡";
+    return "❌";
+  }
+
+  const flat = groups.flatMap(([group, list]) =>
+    list.map((row, index) => ({ row, group, first: index === 0, span: list.length }))
+  );
+
   const table = (compact: boolean) => (
-    groups.map(([groupName, list]) => (
-      <section key={groupName} className="panel matrix-panel">
-        <header className="matrix-group-head">
-          <div>
-            <h3>{groupName}</h3>
-            <small>{list.length} 个交付项{list.some((row) => row.owner) ? ` · 负责人 ${[...new Set(list.map((row) => row.owner).filter(Boolean))].join(" · ")}` : ""}</small>
-          </div>
-          {canEdit && !compact && (
-            <button className="secondary-button" onClick={() => setEditing({ groupName, itemName: "", owner: "", prNumbers: "", blockerModule: "", blockerOwner: "", blockerProgress: "", engageNote: "", statusNote: "" })}>
-              <Plus size={14} />添加交付项
-            </button>
-          )}
-        </header>
-        <div className="table-wrap matrix-scroll">
-          <table className="matrix-table">
-            <thead>
-              <tr>
-                <th className="col-item">小模块</th>
-                <th className="col-mark">后端</th>
-                <th className="col-mark">前端</th>
-                <th className="col-mark">完成</th>
-                <th className="col-blocked">阻塞？</th>
-                <th className="col-note">阻塞模块</th>
-                <th className="col-owner">阻塞方负责人</th>
-                <th className="col-note">阻塞方进展（RFC/PR/合入）</th>
-                <th className="col-note">我们可否部分介入</th>
-                {canEdit && <th className="col-op"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((row) => (
-                <tr key={row.id} className="matrix-row">
-                  <td className="col-item">
-                    <strong>{row.itemName}</strong>
-                    {row.owner && <small>{row.owner}</small>}
-                  </td>
-                  <td className="col-mark"><MarkCell kind="backend" prs={row.prs} /></td>
-                  <td className="col-mark"><MarkCell kind="frontend" prs={row.prs} /></td>
-                  <td className="col-mark">
-                    <DoneCell row={row} />
-                  </td>
-                  <td className="col-blocked">
-                    {row.blocked === true ? <span className="block-chip yes">是</span>
-                      : row.blocked === false ? <span className="block-chip no">否</span>
-                        : <span className="block-chip unset">未标注</span>}
-                  </td>
-                  <td className="col-note matrix-note">{row.blockerModule || <small>—</small>}</td>
-                  <td className="col-owner matrix-note">{row.blockerOwner || <small>—</small>}</td>
-                  <td className="col-note matrix-note">{row.blockerProgress || <small>—</small>}</td>
-                  <td className="col-note matrix-note">{row.engageNote || <small>—</small>}</td>
-                  {canEdit && (
-                    <td className="col-op">
-                      <button className="icon-button" onClick={() => setEditing(row)}><Pencil size={13} /></button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <section className="panel matrix-panel">
+      <header className="matrix-group-head">
+        <div>
+          <h3>责任矩阵</h3>
+          <small>{filtered.length} 个交付项 · 点击上方人名切换成个人视图</small>
         </div>
-      </section>
-    ))
+        {canEdit && !compact && (
+          <button className="secondary-button" onClick={() => setEditing({ groupName: "", itemName: "", owner: "", prNumbers: "", blockerModule: "", blockerOwner: "", blockerProgress: "", engageNote: "", statusNote: "" })}>
+            <Plus size={14} />添加交付项
+          </button>
+        )}
+      </header>
+      <div className="table-wrap matrix-scroll">
+        <table className="matrix-table matrix-one">
+          <thead>
+            <tr>
+              <th className="col-group">大模块</th>
+              <th className="col-item">小模块</th>
+              <th className="col-owner2">负责人</th>
+              <th className="col-pr">相关 PR</th>
+              <th className="col-mark">后端</th>
+              <th className="col-mark">前端</th>
+              <th className="col-done">完成</th>
+              <th className="col-blocked">阻塞？</th>
+              <th className="col-note">阻塞模块</th>
+              <th className="col-owner">阻塞方负责人</th>
+              <th className="col-note">阻塞方进展（RFC/PR/合入）</th>
+              <th className="col-note">我们可否部分介入</th>
+              {canEdit && <th className="col-op"></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {flat.map(({ row, group, first, span }) => (
+              <tr key={row.id} className="matrix-row">
+                {first && <td className="col-group" rowSpan={span}>{group}</td>}
+                <td className="col-item"><strong>{row.itemName}</strong></td>
+                <td className="col-owner2 matrix-note">{row.owner || <small>—</small>}</td>
+                <td className="col-pr">
+                  {row.prs.some((pr) => !pr.sync)
+                    ? <span className="mark-cell">{chipList(row.prs.filter((pr) => !pr.sync))}</span>
+                    : <small>—</small>}
+                </td>
+                <td className="col-mark"><span className="face-symbol">{faceSymbol(row.prs, "backend")}</span></td>
+                <td className="col-mark"><span className="face-symbol">{faceSymbol(row.prs, "frontend")}</span></td>
+                <td className="col-done">
+                  <span className="face-symbol">{doneSymbol(row)}</span>
+                  {row.statusNote && <small className="status-inline">{row.statusNote}</small>}
+                </td>
+                <td className="col-blocked">
+                  {row.blocked === true ? <span className="block-chip yes">是</span>
+                    : row.blocked === false ? <span className="block-chip no">否</span>
+                      : <span className="block-chip unset">未标注</span>}
+                </td>
+                <td className="col-note matrix-note">{row.blockerModule || <small>—</small>}</td>
+                <td className="col-owner matrix-note">{row.blockerOwner || <small>—</small>}</td>
+                <td className="col-note matrix-note">{row.blockerProgress || <small>—</small>}</td>
+                <td className="col-note matrix-note">{row.engageNote || <small>—</small>}</td>
+                {canEdit && (
+                  <td className="col-op">
+                    <button className="icon-button" onClick={() => setEditing(row)}><Pencil size={13} /></button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 
   return (
